@@ -1,11 +1,11 @@
 bl_info = {
     "name": "CEAE",
     "author": "Indoostrialniy",
-    "version": (0,3,10),
+    "version": (0,3,11),
     "blender": (4,0,2),
     "location": "3D Viewport->Tools (T-panel)",		
     "category": "Assets: Engine asset exporting addon",
-    "description": "This addon helps to export assets to custom engine (https://github.com/indoostrialniy/Pet-project), rev. 18.02.2025.",
+    "description": "This addon helps to export assets to custom engine (https://github.com/indoostrialniy/Pet-project), rev. 18.03.2025.",
 }
 
 
@@ -436,55 +436,55 @@ class exportMeshClass(bpy.types.Operator):
             ####writeb(149.0)
             #
             # кусок про ААВВ-коробку
-            MESHES = [mesh.name for mesh in bpy.data.meshes if mesh.name[0:4] == 'UCX_']    # определим все меши, где в названии вначале следует 'UCX_''
-            print(MESHES)
+            # ~ MESHES = [mesh.name for mesh in bpy.data.meshes if mesh.name[0:4] == 'UCX_']    # определим все меши, где в названии вначале следует 'UCX_''
+            # ~ print(MESHES)
 
-            AABB_Box = 'UCX_'+str(level_object.data.name)   # сгенерируем предполагаемое имя ААВВ-коробки для заданного меша
-            print('box: %s'%(AABB_Box))
+            # ~ AABB_Box = 'UCX_'+str(level_object.data.name)   # сгенерируем предполагаемое имя ААВВ-коробки для заданного меша
+            # ~ print('box: %s'%(AABB_Box))
 
-            if AABB_Box in MESHES:                          # если предполагаемое имя нашлось, то ААВВ-коробка захвачена
-                print('Found Collision box!')
-                BOX = bpy.data.meshes[AABB_Box]
-                print('BOX: ' +str(BOX))
+            # ~ if AABB_Box in MESHES:                          # если предполагаемое имя нашлось, то ААВВ-коробка захвачена
+                # ~ print('Found Collision box!')
+                # ~ BOX = bpy.data.meshes[AABB_Box]
+                # ~ print('BOX: ' +str(BOX))
 
-                AABB_Vertices = 0
-                aabb_verts = BOX.vertices
-                for v in BOX.vertices:
-                    AABB_Vertices += 1
+                # ~ AABB_Vertices = 0
+                # ~ aabb_verts = BOX.vertices
+                # ~ for v in BOX.vertices:
+                    # ~ AABB_Vertices += 1
 
-                AABB_Polygons = 0
-                aabb_polys = BOX.polygons
-                for p in BOX.polygons:
-                    AABB_Polygons += 1
+                # ~ AABB_Polygons = 0
+                # ~ aabb_polys = BOX.polygons
+                # ~ for p in BOX.polygons:
+                    # ~ AABB_Polygons += 1
 
-                print('AABB verts: %i'%(AABB_Vertices))
-                print('AABB polys: %i'%(AABB_Polygons))
+                # ~ print('AABB verts: %i'%(AABB_Vertices))
+                # ~ print('AABB polys: %i'%(AABB_Polygons))
 
-                print('Total mem for AABB: %i'%(AABB_Polygons*3*6))
+                # ~ print('Total mem for AABB: %i'%(AABB_Polygons*3*6))
 
-                if context.scene.bModelsAsText == True:
-                    #file_model.write('\t\tx y z nx ny nz\n')
-                    file_model.write('AABB %i\n'%(AABB_Polygons*3*6))
-                total = AABB_Polygons*3*6
+                # ~ #if context.scene.bModelsAsText == True:
+                    # ~ #file_model.write('\t\tx y z nx ny nz\n')
+                # ~ #    file_model.write('AABB %i\n'%(AABB_Polygons*3*6))
+                # ~ #total = AABB_Polygons*3*6
 
-                writeb(total)   #запишем, сколько флоатов надо для ААВВ-коробки
+                # ~ #writeb(total)   #запишем, сколько флоатов надо для ААВВ-коробки
 
-                print('\t\tx y z nx ny nz')
-                for triangle in BOX.polygons:
-                    mynormal = triangle.normal
-                    for vert in triangle.vertices: # перебираем индексы вершин треугольника
-                        print('aabb ' + str(round( aabb_verts[vert].co[0], ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[1],ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[2],ROUND_LEVEL)) +' '+str(round( mynormal[0],ROUND_LEVEL)) + ' ' + str(round( mynormal[1],ROUND_LEVEL)) + ' ' + str(round( mynormal[2],ROUND_LEVEL))+ '')
-                        writeb( round(  aabb_verts[vert].co[0], ROUND_LEVEL))
-                        writeb( round(  aabb_verts[vert].co[1], ROUND_LEVEL))
-                        writeb( round(  aabb_verts[vert].co[2], ROUND_LEVEL))
-                        writeb( round( mynormal[0],ROUND_LEVEL))
-                        writeb( round( mynormal[1],ROUND_LEVEL))
-                        writeb( round( mynormal[2],ROUND_LEVEL))
+                # ~ print('\t\tx y z nx ny nz')
+                # ~ for triangle in BOX.polygons:
+                    # ~ mynormal = triangle.normal
+                    # ~ for vert in triangle.vertices: # перебираем индексы вершин треугольника
+                        # ~ print('aabb ' + str(round( aabb_verts[vert].co[0], ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[1],ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[2],ROUND_LEVEL)) +' '+str(round( mynormal[0],ROUND_LEVEL)) + ' ' + str(round( mynormal[1],ROUND_LEVEL)) + ' ' + str(round( mynormal[2],ROUND_LEVEL))+ '')
+                        # ~ writeb( round(  aabb_verts[vert].co[0], ROUND_LEVEL))
+                        # ~ writeb( round(  aabb_verts[vert].co[1], ROUND_LEVEL))
+                        # ~ writeb( round(  aabb_verts[vert].co[2], ROUND_LEVEL))
+                        # ~ writeb( round( mynormal[0],ROUND_LEVEL))
+                        # ~ writeb( round( mynormal[1],ROUND_LEVEL))
+                        # ~ writeb( round( mynormal[2],ROUND_LEVEL))
 
-                        if context.scene.bModelsAsText == True:
-                            file_model.write('aabb ' + str(round( aabb_verts[vert].co[0], ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[1],ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[2],ROUND_LEVEL)) +' '+str(round( mynormal[0],ROUND_LEVEL)) + ' ' + str(round( mynormal[1],ROUND_LEVEL)) + ' ' + str(round( mynormal[2],ROUND_LEVEL))+ '\n')
-            else:
-                writeb(0)
+                        # ~ if context.scene.bModelsAsText == True:
+                            # ~ file_model.write('aabb ' + str(round( aabb_verts[vert].co[0], ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[1],ROUND_LEVEL)) + ' ' + str(round( aabb_verts[vert].co[2],ROUND_LEVEL)) +' '+str(round( mynormal[0],ROUND_LEVEL)) + ' ' + str(round( mynormal[1],ROUND_LEVEL)) + ' ' + str(round( mynormal[2],ROUND_LEVEL))+ '\n')
+            # ~ else:
+                # ~ writeb(0)
             # конец куска про ААВВ
             #
 
