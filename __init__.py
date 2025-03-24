@@ -1,11 +1,11 @@
 bl_info = {
     "name": "CEAE",
     "author": "Indoostrialniy",
-    "version": (0,3,11),
+    "version": (0,3,12),
     "blender": (4,0,2),
     "location": "3D Viewport->Tools (T-panel)",		
     "category": "Assets: Engine asset exporting addon",
-    "description": "This addon helps to export assets to custom engine (https://github.com/indoostrialniy/Pet-project), rev. 18.03.2025.",
+    "description": "This addon helps to export assets to custom engine (https://github.com/indoostrialniy/Pet-project), rev. 24.03.2025.",
 }
 
 
@@ -1289,33 +1289,56 @@ class exportSetClass(bpy.types.Operator):
     ## FUNC START #######################################################
     def printObjectCodeLike(fileToWrite, location, rotation_quaternion, OBJECT, self, context):
         # addEntity("Cabin", vec3(0, 0, 0), quat(1, 0, 0, 0), "Cabin", "MESH", { "M_Elevator_Cabin_01" }, "forward");
-        fileToWrite.write('\t\taddEntity( "'+str(OBJECT.name)+ '", glm::vec3(' + str(round(location[0],4)) + ', ' + str(round(location[1],4)) + ', ' + str(round(location[2],4)) + '),'  )
-        fileToWrite.write(' glm::quat(' + str(round(rotation_quaternion.w,4)) + ', ' + str(round(rotation_quaternion.x,4)) + ', ' + str(round(rotation_quaternion.y,4)) + ', ' + str(round(rotation_quaternion.z,4)) + '), ' )
+        
+        #корректура имени сущности
+        #OBJECT.name.find("") == -1:
+        varName = OBJECT.name.replace(".", "_")
+		
+        fileToWrite.write('\n\tentityInitializationParameters ' + str(varName) + ';\n')
+        fileToWrite.write('\t\t' + str(varName) + '.initSysname = "' + str(OBJECT.name) + '";\n')
+        fileToWrite.write('\t\t' + str(varName) + '.initPos = glm::vec3(' + str(round(location[0],4)) + ', ' + str(round(location[1],4)) + ', ' + str(round(location[2],4)) + ');\n')
+        fileToWrite.write('\t\t' + str(varName) + '.initRot = glm::quat(' + str(round(rotation_quaternion.w,4)) + ', ' + str(round(rotation_quaternion.x,4)) + ', ' + str(round(rotation_quaternion.y,4)) + ', ' + str(round(rotation_quaternion.z,4)) + ');\n')
+        fileToWrite.write('\t\t' + str(varName) + '.initMeshName = "' + str(OBJECT.data.name) + '";	//dont forget initCollisionType\n')
+        fileToWrite.write('\t\t' + str(varName) + '.initMeshMaterialsVector = {')
+		
+		 
+		# ~ plane.initSysname = "plane";
+		# ~ plane.initPos = glm::vec3(0.0, 0.0, 0.0);
+		# ~ plane.initRot = glm::quat(1.0, 0.0, 0.0, 0.0);
+		# ~ plane.initMeshName = "SM_MainMenu_Plane_01";
+		# ~ //cabin.initCollisionType = ElevatorCollision;
+		# ~ plane.initMeshMaterialsVector = { "coast_sand_02" };
+	# ~ addEntity( std::move(plane) );
+        
+        
+        #fileToWrite.write('\t\taddEntity( "'+str(OBJECT.name)+ '", glm::vec3(' + str(round(location[0],4)) + ', ' + str(round(location[1],4)) + ', ' + str(round(location[2],4)) + '),'  )
+        #fileToWrite.write(' glm::quat(' + str(round(rotation_quaternion.w,4)) + ', ' + str(round(rotation_quaternion.x,4)) + ', ' + str(round(rotation_quaternion.y,4)) + ', ' + str(round(rotation_quaternion.z,4)) + '), ' )
 
         # name = OBJECT.name
         # if name[len(name)-4] == '.' :   #обрезаем точку и номер
         #     name = name[0:len(name)-4]
 
-        fileToWrite.write( ' "' + str(OBJECT.data.name) + '", {  }, "' + str(OBJECT.type) + '", {' )  #-- выписали имя модели и тип ообъекта
+        #fileToWrite.write( ' "' + str(OBJECT.data.name) + '", {  }, "' + str(OBJECT.type) + '", {' )  #-- выписали имя модели и тип ообъекта
 
         for material in OBJECT.data.materials:
             if material != None:
                 # -- здесь возмодно надо будет обрезать точки
-                fileToWrite.write(' "'+str(material.name)+'", ')
+                fileToWrite.write(' "' + str(material.name) + '", ')
             else:
                 fileToWrite.write(' "default_1k", ')
-        fileToWrite.write('}, ')    #-- закончили выписку материалов
+        fileToWrite.write('}; ')    #-- закончили выписку материалов
 
+        fileToWrite.write('\n\taddEntity( std::move(' + str(varName) + ') );\n')
         #for material in OBJECT.data.materials:  #допишем все назначенные материалы
         #    fileToWrite.write(' "'+str(material.name)+'", ')
 
-        try:
-            if bpy.context.bEnableLightmaps == True and "Lightmap" in OBJECT:
-                fileToWrite.write(' "' + str(OBJECT["Lightmap"].name) + '", '  )
-        except:
-            fileToWrite.write(' "none", '  )
+        # ~ try:
+            # ~ if bpy.context.bEnableLightmaps == True and "Lightmap" in OBJECT:
+                # ~ fileToWrite.write(' "' + str(OBJECT["Lightmap"].name) + '", '  )
+        # ~ except:
+            # ~ fileToWrite.write(' "none", '  )
 
-        fileToWrite.write(' "forward" );\n')
+        # ~ fileToWrite.write(' "forward" );\n')
     ## FUNC END #########################################################
 
 
