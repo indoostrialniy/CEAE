@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "CEAE v0.4.8",
+    "name": "CEAE v0.4.9",
     "author": "Paul",
-    "version": (0,4,8),
+    "version": (0,4,9),
     "blender": (4,0,2),
     "category": "Indoostrialniy",
-    "description": "01.10.2026. This addon helps to export assets to custom engine",
+    "description": "23.10.2026. This addon helps to export assets to custom engine",
 }
 
 
@@ -18,6 +18,8 @@ import datetime
 from array import array
 from bpy.props import (StringProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, EnumProperty, PointerProperty)
 from bpy.types import (Panel, Menu, Operator, PropertyGroup, AddonPreferences)
+from pathlib import Path
+# ~ from PIL import Image
 
 ROUND_LEVEL = 4
 
@@ -140,11 +142,11 @@ class exportLightmapClass(bpy.types.Operator):
         if OBJECT.type == 'MESH':
             print('\nObject: ' + str(OBJECT.name))
 
-            exportMaterialClass.configureMaterial(OBJECT, '\t\t')
+            # ~ exportMaterialClass.configureMaterial(OBJECT, '\t\t')
 
-            exportLightmapClass.bindLightmap(OBJECT,self, context)
+            # ~ exportLightmapClass.bindLightmap(OBJECT,self, context)
 
-            exportLightmapClass.bakeLightmap(OBJECT,self, context)
+            # ~ exportLightmapClass.bakeLightmap(OBJECT,self, context)
 
             #exportLightmapClass.exportLightmap(OBJECT,self, context)
 
@@ -1132,9 +1134,23 @@ class exportMaterialClass(bpy.types.Operator):
 
     LINKS = [] #массив для хранения слинкованных карт для данного материала
     anyNodeLinked = 'FALSE'
+    
+    EXPORTED_TEXTURES = [] # массив для хранения экспортированных текстур. Чтобы повторно не записывать в папку уже сохраненные текстуры
 
     xSize = 1024
     xScale = 1.0
+
+    # ~ def resize_texture(src_path, dst_path, target_size=(2048, 2048)):
+        # ~ if not os.path.exists(src_path):
+            # ~ return False
+        # ~ with Image.open(src_path) as img:
+            # ~ # Для PBR лучше использовать Lanczos (хорошее качество)
+            # ~ img_resized = img.resize(target_size, Image.LANCZOS)
+            # ~ # Сохраняем как PNG или JPG в зависимости от типа текстуры
+            # ~ fmt = "PNG" if img.mode == "RGBA" else "JPEG"
+            # ~ img_resized.save(dst_path, format=fmt)
+        # ~ return True
+
 
     def processMapping(materialsourcefile, linkedNode): #функция достает значение масштабирования текстуры через mappin node
         scaleInput = linkedNode.inputs['Scale']
@@ -1152,40 +1168,67 @@ class exportMaterialClass(bpy.types.Operator):
             exportMaterialClass.xScale = scaleInput.default_value[0]
 
 
-    def printImageOptions(materialsourcefile, img, self, context ):
+    #############################################################################################################################
+    # Эскортировать данные о слинкованной текстуре: параметры сэмплинга, сам файл текстуры и т.д.             
+    def printLinkedImageTextureData(materialsourcefile, img, self, context, nodeType ):
+        if img.image and img.image.name:
+            imageName = img.image.name
+        else:
+            print('\t\t\t\t\t\tNode [' + str(nodeType) + '] has no attached image at all!')
+            return False
+        
+        # 1) экспортируем сам файл (при возможности)
+        if context.scene.bTextures == True and imageName not in exportMaterialClass.EXPORTED_TEXTURES:
+            slash = '/' if context.scene.operationSystem == "0" else '\\'
+            texturesPath    = context.scene.projectFolder + slash + 'textures' + slash
+            filename = texturesPath + slash + imageName
 
-        # img = input1.links[0].from_node #возьмем 1 слинкованную ноду для входа input1. input1 может быть base color, normal etc
-        imageName = img.image.name
+            if img.image:
+                if img.image.size[0] > 0 and img.image.size[1] > 0:
+                    #print('Texture is loaded and has valid size')
+                    # ~ img.image.save_render(filename)
+                    
+                    ## scale image
+                    orig = img.image
+                    target_w, target_h = 256, 256
+                    # Создаём новый блок данных изображения (пустой, нужного размера)
+                    dup = img.image.copy() #bpy.data.images.new(name="temp_resized", width=target_w, height=target_h)#, alpha=orig.use_alpha)
+                    
+                    dup.scale(target_w, target_h)  # ресемплинг внутри Blender
+                    # Копируем пиксели из оригинала в новый (в Blender пиксели — это плоский массив RGBA)
+                    # Важно: у dup.pixels сначала нужно задать длину (при создании она уже правильная)
+                    #dup.pixels = orig.pixels[:]  # копируем все пиксели
+
+                    # Теперь масштабируем уже дубликат (ресемплинг)
+                    #dup.scale(target_w, target_h)
+
+                    # Сохраняем именно дубликат
+                    dup.save_render(filename)
+
+                    # Удаляем временный дубликат из памяти Blender
+                    bpy.data.images.remove(dup)
+                    ##
+                    
+                    exportMaterialClass.EXPORTED_TEXTURES.append(imageName)
+                    
+                else:
+                    print('\t\t\t\t\t\tNode [' + str(nodeType) + '] is referencing an empty no-data image [' + str(img.image.name) +'')
+                    return False
+            else:
+                print('\t\t\t\t\t\tNode [' + str(nodeType) + '] has no attached image at all!')
+                return False
+        
+        # если текстура существует и была успешно экспортирована, то:
+        # 2) выпишем текстовое описание сэмплинга
+        
 
         if imageName[len(imageName)-4] == '.' and imageName[len(imageName)-3] == '0':   #обрезаем точку и номер
             imageName = imageName[0:len(imageName)-4]
         name_texture = imageName
 
-        materialsourcefile.write(str(name_texture) +'\n')
-        materialsourcefile.write('size '+str(img.image.size[0])+' '+str(img.image.size[1])+'\n')
-        exportMaterialClass.xSize = img.image.size[0]
-
-        #так как выписываемм проверенные параметры текстуры, надо бы экспортировать и саму текстуру
-        #bpy.context.scene.AnimatorProps.texture_path
-
-        #bpy.ops.image.save_as(save_as_render=False, filepath="//../../../../../home/paul/Downloads/brick.png", show_multiview=False, use_multiview=False)
-        #filename = "/home/paul/Downloads/" + imageName
-
-        #filename = bpy.context.scene.AnimatorProps.texture_path + imageName
-        if context.scene.bTextures == True: # and imageName not in EXPORTED_ASSETS:
-            slash = '/' if context.scene.operationSystem == "0" else '\\'
-            texturesPath    = context.scene.projectFolder + slash + 'textures' + slash
-
-            filename = texturesPath + slash + imageName
-
-            img.image.save_render(filename)
-            #EXPORTED_ASSETS.append(imageName)
-            #materialsourcefile.write('etegegegeg\n')
-
-        #materialsourcefile.write('\n\n '+str(bpy.types.Scene.texture_path)+'\n\n')
-        #materialsourcefile.write('\n\n '+str(bpy.context.scene.AnimatorProps.texture_path)+'\n\n')
-
-        # речь идет о нодах изображения, так что:
+        materialsourcefile.write('\n\nmap\n' + str(nodeType) + ' ' + str(name_texture) +'\n')
+        materialsourcefile.write('size '+str(img.image.size[0])+' '+str(img.image.size[1])+'\n') ## бесполезно и ненужно
+        # scale
         try:
             vectorInput = img.inputs['Vector']
             if vectorInput.is_linked: #если vector залинкована
@@ -1194,35 +1237,43 @@ class exportMaterialClass(bpy.types.Operator):
                     exportMaterialClass.processMapping(materialsourcefile, linkedNode)
 
                 if linkedNode.type == 'REROUTE':
-                    #materialsourcefile.write('reroute knot linked\n')
+                #materialsourcefile.write('reroute knot linked\n')
                     routeNode = linkedNode.inputs[0].links[0].from_node
-
                     if routeNode.type == 'MAPPING':
                         exportMaterialClass.processMapping(materialsourcefile, routeNode)
             else:
                materialsourcefile.write('scale 1.0 (No mapping linked: image node vector input is empty, set default scale)\n')
-
-            # for input2 in img.inputs:
-            #     if input2.is_linked:
-            #         vector = input2.links[0].from_node
-            #         if vector.inputs['Scale'].is_linked:
-            #             vector_scale = vector.inputs['Scale'].links[0].from_node
-            #             materialsourcefile.write('scale ' + str(vector_scale.outputs['Value'].default_value) +'\n')
-            #             exportMaterialClass.xScale = vector_scale.outputs['Value'].default_value
-            #         else:
-            #             #materialsourcefile.write('scale 1.0\n')
-            #             materialsourcefile.write('scale ' + str(vector.inputs['Scale'].default_value[0]) + '\n') #значение масштаба смотрим по X
-            #     else:
-            #         materialsourcefile.write('scale 1.0\n')
         except:
             materialsourcefile.write('scale 1.0 (ERROR)\n')
-
+        # end scale
         materialsourcefile.write('interpolation ' +str(img.interpolation) +' ' +'\n')
         materialsourcefile.write('extension ' +str(img.extension) +' ' +'\n')
         materialsourcefile.write('END\n')
+        return True
+        
 
+            
+            
+		    #EXPORTED_ASSETS.append(imageName)
+		    #materialsourcefile.write('etegegegeg\n')
 
-    def PRINTLINKINFO(materialsourcefile, input1, self, context):
+	#materialsourcefile.write('\n\n '+str(bpy.types.Scene.texture_path)+'\n\n')
+	#materialsourcefile.write('\n\n '+str(bpy.context.scene.AnimatorProps.texture_path)+'\n\n')
+
+	# речь идет о нодах изображения, так что:
+	
+		
+        # ~ return
+    #############################################################################################################################
+  
+
+        
+ 
+#############################################################################################################################
+# Экспортировать данные с одного из входов ноды PrincipledBSDF - Base Color, Normal etc:
+# попытаться экспортировать текстуру и описание ее сэмплинга 
+# либо (в т.ч. если некорректная текстура вернула False) выписать данные (о цвете и т.д.) по-умолчанию из ноды PrincipledBSDF
+    def printBSDFInputData(materialsourcefile, input1, self, context):    
         nodeType = 'none'
         
         if input1.name == 'Base Color':
@@ -1241,23 +1292,22 @@ class exportMaterialClass(bpy.types.Operator):
             nodeType = 'Emission'
         if input1.name == 'Alpha':
             nodeType = 'Alpha'
-        
-        print('Link info of: ' + str(nodeType) + '\n')
-        #return
-        
-        
-        if input1.is_linked:
-            node = input1.links[0].from_node
-            #materialsourcefile.write('node ' + str(node.type)+'\n') # node.type - тип ноды: TEX_IMAGE, NORMAL_MAP etc
             
-            #текстура может быть назначена сразу
+        inputExportedSuccessfully = False
+               
+        # если что-то слинковано...
+        if input1.is_linked:
+            print('\t\t\t\t\tInfo of linked input: ' + str(nodeType) + '')  
+            
+            node = input1.links[0].from_node
+            
+            # node.type - тип ноды: TEX_IMAGE, NORMAL_MAP etc
+            
+            # 1) текстура может быть назначена сразу через Image Texture
             if node.type == "TEX_IMAGE":
-                materialsourcefile.write('\n\nmap\n' + str(nodeType) + ' ' )
-                exportMaterialClass.printImageOptions( materialsourcefile, node, self, context )
-                exportMaterialClass.LINKS.append(str(nodeType))
-                exportMaterialClass.anyNodeLinked = 'TRUE'
-                return
-            #еще текстура может быть назначена через миксер с лайтмапой
+                inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, node, self, context, nodeType )
+            
+            # 2) еще текстура может быть назначена через миксер с лайтмапой
             if node.type == "MIX_RGB":
                 # node.inputs[0].name -> factor
                 # node.inputs[1].name -> color 1 (как правило, lightmap)
@@ -1275,71 +1325,52 @@ class exportMaterialClass(bpy.types.Operator):
                         #materialsourcefile.write('BAKED!!!!' + '\n' )
     
                         if color1_node.type == "TEX_IMAGE":
-                            materialsourcefile.write('\n\nmap\nLightmap' + ' ' )
-                            exportMaterialClass.printImageOptions( materialsourcefile, color1_node, self, context )
-                            exportMaterialClass.LINKS.append(str('Lightmap'))
-                            exportMaterialClass.anyNodeLinked = 'TRUE'
+                            inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, color1_node, self, context, nodeType )
     
                 #если нода "color2" - diffuse залинкована
                 if node.inputs[2].is_linked:
                     color2_node = node.inputs[2].links[0].from_node #image
                     if color2_node.type == "TEX_IMAGE":
-                        materialsourcefile.write('\n\nmap\nBaseColor' + ' ' )
-                        exportMaterialClass.printImageOptions( materialsourcefile, color2_node, self, context )
-                        exportMaterialClass.LINKS.append(str('BaseColor'))
-                        exportMaterialClass.anyNodeLinked = 'TRUE'
-                
-                return
-    
+                        inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, color2_node, self, context, nodeType )      
+            
+            # 3) или вообще как normal map
             if node.type == "NORMAL_MAP": # node.inputs[0].name - Strength input, node.inputs[1].name - Color input
                 if node.inputs[1].is_linked: #если нода цвета залинкована
                     normalmapImage = node.inputs[1].links[0].from_node
                     if normalmapImage.type == "TEX_IMAGE":
-                        materialsourcefile.write('\n\nmap\n' + str(nodeType) + ' ' )
-                        exportMaterialClass.printImageOptions( materialsourcefile, normalmapImage, self, context )
-                        exportMaterialClass.LINKS.append(str(nodeType))
-                        #if input1.name == 'Base Color':
-                        exportMaterialClass.anyNodeLinked = 'TRUE'
-                    #materialsourcefile.write(str(normalmapImage.type) + '\n')
-                return
+                        inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, normalmapImage, self, context, nodeType )
         
-        
-        else:
-            ##materialsourcefile.write(str(nodeType) + ' not linked, value ' + str(input1.default_value) + '\n' )
+        # а если ничего не слинковано либо текстуру не удалось экспортировать, то inputExportedSuccessfully останется False 
+        # и тогда выпишем значения по-умолчанию
+        if inputExportedSuccessfully == False:
+            # если вход - эмиссия или цвет (т.е. вектор), то запишем значения по-умолчанию
             if nodeType == 'Emission' or nodeType == 'BaseColor':
                 materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value[0], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[1], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[2], ROUND_LEVEL)) +'\nEND\n' )
-			
+			# а у остальных параметров значение состоит из 1 числа
             if nodeType == 'Metallic' or nodeType == 'Roughness':
                 materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value, ROUND_LEVEL)) + '\nEND\n' )
-            # ~ if nodeType == 'Normal':
-                # ~ return
+#############################################################################################################################  
             
-            # ~ if nodeType == 'Emission':
-                # ~ materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value[0], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[1], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[2], ROUND_LEVEL)) +'\n' )
-                # ~ return
-            # ~ else:
-                # ~ materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value, ROUND_LEVEL)) + '\n' )
-            
-            # ~ materialsourcefile.write('End\n' )
 
-    def setDefaultMaterial(materialsourcefile):
-        materialsourcefile.write('\n;\tBaseColor is not setted, so link a default texture\n')
-        if exportMaterialClass.xSize == 1024:
-            materialsourcefile.write('\nmap\nBaseColor default_1k.png\n')
+
+    # ~ def setDefaultMaterial(materialsourcefile):
+        # ~ materialsourcefile.write('\n;\tBaseColor is not setted, so link a default texture\n')
+        # ~ if exportMaterialClass.xSize == 1024:
+            # ~ materialsourcefile.write('\nmap\nBaseColor default_1k.png\n')
             # ~ materialsourcefile.write('size 1024 1024\n')
-        if exportMaterialClass.xSize == 2048:
-            materialsourcefile.write('map\nBaseColor default_2k.png\n')
+        # ~ if exportMaterialClass.xSize == 2048:
+            # ~ materialsourcefile.write('map\nBaseColor default_2k.png\n')
             # ~ materialsourcefile.write('size 2048 2048\n')
-
-        materialsourcefile.write('scale ' + str(exportMaterialClass.xScale) +'\n')   #запишем масштаб, который либо 1 по умолчанию либо обновлен какой-либо нодой
-        materialsourcefile.write('interpolation Linear\n')
-        materialsourcefile.write('extension REPEAT\n')
-        materialsourcefile.write('END\n')
+#############################################################################################################################
+       
 
 
     def exportMaterial(OBJECT, self, context):
+		
+        exportMaterialClass.EXPORTED_TEXTURES.clear() # в начале экспорта - очистка списка экспортированных текстур
+		
         for material in OBJECT.data.materials:
-            print(str(material.name)+'\n')
+            print('\t\t\t\tNow process material ['+str(material.name)+']')
             materialName = material.name #обрежем
 
             if materialName not in ALREADY_EXPORTED_RESOURCES:
@@ -1349,45 +1380,33 @@ class exportMaterialClass(bpy.types.Operator):
                 materialPath    = context.scene.projectFolder + slash + 'materials' + slash
 
                 materialsourcefile = open(materialPath + slash + materialName+'.ltx', 'w')
+                # ~ base_path = Path(context.scene.projectFolder)
+                # ~ material_dir = base_path / 'materials'
+
+                # ~ # Создаёт всю цепочку папок, если нет
+                # ~ material_dir.mkdir(parents=True, exist_ok=True)
+
+                # ~ file_path = material_dir / (materialName + '.ltx')
+
+                # ~ with file_path.open('w', encoding='utf-8') as materialsourcefile:
+                    # ~ materialsourcefile.write('ваши данные')
                 materialsourcefile.write(';'+str(datetime.datetime.now()) + '\nmaterial '+str(materialName) +'\n')
                 #########################################################
 
-                ##добавить проверку на соразммерность текстур!!
-
-                exportMaterialClass.LINKS.clear()# = [] #массив для хранения слинкованных карт для данного материала
-                exportMaterialClass.anyNodeLinked = 'FALSE'
-                exportMaterialClass.xSize = 1024
-                exportMaterialClass.xScale = 1.0
+                # ~ exportMaterialClass.LINKS.clear()# = [] #массив для хранения слинкованных карт для данного материала
+                # ~ exportMaterialClass.anyNodeLinked = 'FALSE'
+                # ~ exportMaterialClass.xSize = 1024
+                # ~ exportMaterialClass.xScale = 1.0
 
                 for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Principled BSDF'):
-                    for input1 in node.inputs: #(input0 for input0 in node.inputs if input0.is_linked):
-
-                        if input1.name == 'Base Color':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
-
-                        if input1.name == 'Emission Color':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
-
-                        if input1.name == 'Normal':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
-                            
-                        if input1.name == 'Metallic':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
-                            
-                        if input1.name == 'Roughness':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
-                            
-                        if input1.name == 'Alpha':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
-                        
-                        # ~ if 'BaseColor' not in exportMaterialClass.LINKS and exportMaterialClass.anyNodeLinked == 'TRUE':
-                            # ~ exportMaterialClass.setDefaultMaterial(materialsourcefile)
+                    for input1 in node.inputs: # пройтись по всем входам ноды BSDF: Base Color, Normal, Emission etc
+                        exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context)
                 
                 # выпишем инфу о ноде смещения
                 for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Displacement'):
                     for input1 in (input0 for input0 in node.inputs if input0.is_linked):
                         if input1.name == 'Height':
-                            exportMaterialClass.PRINTLINKINFO(materialsourcefile, input1, self, context)
+                            exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context)
 
                 # ~ if exportMaterialClass.anyNodeLinked == 'FALSE':
                     # ~ exportMaterialClass.setDefaultMaterial(materialsourcefile)
