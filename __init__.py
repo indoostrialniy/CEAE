@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "CEAE v0.4.9",
+    "name": "CEAE v0.4.10",
     "author": "Paul",
-    "version": (0,4,9),
+    "version": (0,4,10),
     "blender": (4,0,2),
     "category": "Indoostrialniy",
-    "description": "23.10.2026. This addon helps to export assets to custom engine",
+    "description": "30.10.2026. This addon helps to export assets to custom engine",
 }
 
 
@@ -19,6 +19,7 @@ from array import array
 from bpy.props import (StringProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, EnumProperty, PointerProperty)
 from bpy.types import (Panel, Menu, Operator, PropertyGroup, AddonPreferences)
 from pathlib import Path
+from bpy.app.handlers import persistent
 # ~ from PIL import Image
 
 ROUND_LEVEL = 4
@@ -794,7 +795,7 @@ class exportMeshClass(bpy.types.Operator):
 
     
     ## FUNC START #######################################################
-    def meshTriangulated(level_object):
+    def meshTriangulated(level_object, tabs):
         triangles = 0
         quads = 0
 
@@ -805,7 +806,7 @@ class exportMeshClass(bpy.types.Operator):
                 quads += 1
 
         if triangles > 0 and quads == 0:
-            print('%s triangulated'%(level_object.name))
+            print( str(tabs) + '[%s] triangulated'%(level_object.name))
             return 1
         if quads > 0 and triangles == 0:
             print('NOT triangulated')
@@ -814,20 +815,22 @@ class exportMeshClass(bpy.types.Operator):
 
 
     ## FUNC START #######################################################
-    def export_model(self, context, level_object):  #сюда пришел указатель на объект меша, в том числе дубликата!
+    def export_model(self, context, level_object, tabs):  #сюда пришел указатель на объект меша, в том числе дубликата!
 
-        
+        tabs += '\t'
 
         slash = '/' if context.scene.operationSystem == "0" else '\\'
 
         name_mesh = level_object.data.name
+        name_mesh.replace(".", "_")
 
-        if name_mesh[len(name_mesh)-4] == '.' :   #обрезаем точку и номер
-            name_mesh = name_mesh[0:len(name_mesh)-4]
+        # ~ if name_mesh[len(name_mesh)-4] == '.' :   #обрезаем точку и номер
+            # ~ name_mesh = name_mesh[0:len(name_mesh)-4]
             
         if name_mesh not in ALREADY_EXPORTED_RESOURCES:
             ALREADY_EXPORTED_RESOURCES.append(name_mesh)
         else:
+            print(str(tabs) + ' already exported previosly!')
             return #возвращаемся из функции, ибо данна модель уже была ранее экспортирована
             
         ####if name_mesh[len(name_mesh)-2] == '_' :   #обрезаем _temp
@@ -840,11 +843,11 @@ class exportMeshClass(bpy.types.Operator):
 
         if name_mesh.find("UCX") == -1: # экспортируем меш, только если это не ААВВ-коробка (т.е. UCX не найдено в названии)
             #logFile = open(context.scene.logFolder, 'a') #откроем файл для дозаписи нового содержимого
-            print('\n\nExporting mesh %s\n'%(name_mesh))
+            print(str(tabs)+'Exporting mesh [%s]'%(name_mesh))
 
 
-            if exportMeshClass.meshTriangulated(level_object) == 0:
-                print('Model ' + str(name_mesh) + ' not triangulated, skip\n')
+            if exportMeshClass.meshTriangulated(level_object, tabs) == 0:
+                print(str(tabs) + 'Model ' + str(name_mesh) + ' not triangulated, skip\n')
                 return
 
             try:
@@ -1002,7 +1005,7 @@ class exportMeshClass(bpy.types.Operator):
 
             boneCheckCounter = 0
 
-            print('Almost done')
+            #print('Almost done')
 
             #version with bones
             for uv_layer in level_object.data.uv_layers: #перебираем текстурные слои
@@ -1119,7 +1122,7 @@ class exportMeshClass(bpy.types.Operator):
             #console.write("slkgndsldsnnsdlngds")
 
             #exportMeshClass.ShowMessageBox(log, 'Mesh log:', 'BLENDER')
-            print('OK!')
+            print(str(tabs) + 'Mesh exported successfully!')
 
         return meshPath
     ## FUNC END #########################################################
@@ -1130,27 +1133,9 @@ class exportMaterialClass(bpy.types.Operator):
     bl_idname = 'material.export_material' #запуск командой mesh.output_list_of_objects
     bl_label = 'Export material to file'
     bl_description = "print objects`s materials to file"
-
-
-    LINKS = [] #массив для хранения слинкованных карт для данного материала
-    anyNodeLinked = 'FALSE'
     
     EXPORTED_TEXTURES = [] # массив для хранения экспортированных текстур. Чтобы повторно не записывать в папку уже сохраненные текстуры
-
-    xSize = 1024
     xScale = 1.0
-
-    # ~ def resize_texture(src_path, dst_path, target_size=(2048, 2048)):
-        # ~ if not os.path.exists(src_path):
-            # ~ return False
-        # ~ with Image.open(src_path) as img:
-            # ~ # Для PBR лучше использовать Lanczos (хорошее качество)
-            # ~ img_resized = img.resize(target_size, Image.LANCZOS)
-            # ~ # Сохраняем как PNG или JPG в зависимости от типа текстуры
-            # ~ fmt = "PNG" if img.mode == "RGBA" else "JPEG"
-            # ~ img_resized.save(dst_path, format=fmt)
-        # ~ return True
-
 
     def processMapping(materialsourcefile, linkedNode): #функция достает значение масштабирования текстуры через mappin node
         scaleInput = linkedNode.inputs['Scale']
@@ -1170,12 +1155,29 @@ class exportMaterialClass(bpy.types.Operator):
 
     #############################################################################################################################
     # Эскортировать данные о слинкованной текстуре: параметры сэмплинга, сам файл текстуры и т.д.             
-    def printLinkedImageTextureData(materialsourcefile, img, self, context, nodeType ):
-        if img.image and img.image.name:
-            imageName = img.image.name
-        else:
+    def printLinkedImageTextureData(materialsourcefile, img, self, context, nodeType, tabs ):
+        if not img.image: # and img.image.name):
             print('\t\t\t\t\t\tNode [' + str(nodeType) + '] has no attached image at all!')
             return False
+        
+        if os.path.basename(img.image.filepath): #img.image.filepath: # local
+            imageName = os.path.basename(img.image.filepath)
+            #print('Image ['+str(img.image)+'] is local and has filepath ' + str(imageName))
+        else:
+            #print('Linked image ['+str(img.image)+'] has no filepath!' )	
+            if img.image.name:
+                imageName = img.image.name
+            else:
+                print('\t\t\t\t\t\tWrong name [' + str(nodeType) + ']!')
+                return False
+        
+        imageName = imageName.replace(" ", "_")
+        
+        # ~ if imageName not in ALREADY_EXPORTED_RESOURCES:
+            # ~ ALREADY_EXPORTED_RESOURCES.append(imageName)
+        # ~ else:
+            # ~ print(str(tabs) + ' texture already exported previosly!')
+            # ~ return False #возвращаемся из функции, ибо данна модель уже была ранее экспортирована
         
         # 1) экспортируем сам файл (при возможности)
         if context.scene.bTextures == True and imageName not in exportMaterialClass.EXPORTED_TEXTURES:
@@ -1186,29 +1188,32 @@ class exportMaterialClass(bpy.types.Operator):
             if img.image:
                 if img.image.size[0] > 0 and img.image.size[1] > 0:
                     #print('Texture is loaded and has valid size')
-                    # ~ img.image.save_render(filename)
+    # ~ bpy.types.Scene.eResizedTextureSize        = bpy.props.EnumProperty( name="Target size", description="Choose texture size after resizing",   items=  [ ("1", "256", ""), ("2", "512", ""), ("4", "1024", ""), ("8", "2048", ""), ("16", "4096", "") ], default="1"  )
+                    if context.scene.bResizeTextures == True:
+                        ## scale image
+                        orig = img.image
+                        #target_w, target_h = 256, 256
+                        target_w, target_h = int(context.scene.eResizedTextureSize)*256, int(context.scene.eResizedTextureSize)*256
+                        # Создаём новый блок данных изображения (пустой, нужного размера)
+                        dup = img.image.copy() #bpy.data.images.new(name="temp_resized", width=target_w, height=target_h)#, alpha=orig.use_alpha)
                     
-                    ## scale image
-                    orig = img.image
-                    target_w, target_h = 256, 256
-                    # Создаём новый блок данных изображения (пустой, нужного размера)
-                    dup = img.image.copy() #bpy.data.images.new(name="temp_resized", width=target_w, height=target_h)#, alpha=orig.use_alpha)
-                    
-                    dup.scale(target_w, target_h)  # ресемплинг внутри Blender
-                    # Копируем пиксели из оригинала в новый (в Blender пиксели — это плоский массив RGBA)
-                    # Важно: у dup.pixels сначала нужно задать длину (при создании она уже правильная)
-                    #dup.pixels = orig.pixels[:]  # копируем все пиксели
+                        dup.scale(target_w, target_h)  # ресемплинг внутри Blender
+                        # Копируем пиксели из оригинала в новый (в Blender пиксели — это плоский массив RGBA)
+                        # Важно: у dup.pixels сначала нужно задать длину (при создании она уже правильная)
+                        #dup.pixels = orig.pixels[:]  # копируем все пиксели
 
-                    # Теперь масштабируем уже дубликат (ресемплинг)
-                    #dup.scale(target_w, target_h)
+                        # Теперь масштабируем уже дубликат (ресемплинг)
+                        #dup.scale(target_w, target_h)
 
-                    # Сохраняем именно дубликат
-                    dup.save_render(filename)
+                        # Сохраняем именно дубликат
+                        dup.save_render(filename)
 
-                    # Удаляем временный дубликат из памяти Blender
-                    bpy.data.images.remove(dup)
-                    ##
-                    
+                        # Удаляем временный дубликат из памяти Blender
+                        bpy.data.images.remove(dup)
+                        ##
+                    else:
+                        img.image.save_render(filename)
+                         
                     exportMaterialClass.EXPORTED_TEXTURES.append(imageName)
                     
                 else:
@@ -1217,16 +1222,22 @@ class exportMaterialClass(bpy.types.Operator):
             else:
                 print('\t\t\t\t\t\tNode [' + str(nodeType) + '] has no attached image at all!')
                 return False
+        else:
+            print(str(tabs) + ' texture already exported previosly or not needed!')
         
         # если текстура существует и была успешно экспортирована, то:
         # 2) выпишем текстовое описание сэмплинга
         
 
-        if imageName[len(imageName)-4] == '.' and imageName[len(imageName)-3] == '0':   #обрезаем точку и номер
-            imageName = imageName[0:len(imageName)-4]
+        #if imageName[len(imageName)-4] == '.' and imageName[len(imageName)-3] == '0':   #обрезаем точку и номер
+        #    imageName = imageName[0:len(imageName)-4]
+        #imageName = os.path.basename(img.image.filepath)
         name_texture = imageName
+        
+        materialsourcefile.write('\n\nmap\n' + str(nodeType) + ' ' + str(name_texture) +'\n') # при локалке
+        # ~ materialsourcefile.write('map2\n' + str(nodeType) + ' ' + str(img.image.name) +'\n') # при линковке
+        # ~ materialsourcefile.write('map3\n' + str(nodeType) + ' ' + str(os.path.basename(img.image.filepath)) +'\n') # при локалке
 
-        materialsourcefile.write('\n\nmap\n' + str(nodeType) + ' ' + str(name_texture) +'\n')
         materialsourcefile.write('size '+str(img.image.size[0])+' '+str(img.image.size[1])+'\n') ## бесполезно и ненужно
         # scale
         try:
@@ -1250,30 +1261,13 @@ class exportMaterialClass(bpy.types.Operator):
         materialsourcefile.write('extension ' +str(img.extension) +' ' +'\n')
         materialsourcefile.write('END\n')
         return True
-        
-
-            
-            
-		    #EXPORTED_ASSETS.append(imageName)
-		    #materialsourcefile.write('etegegegeg\n')
-
-	#materialsourcefile.write('\n\n '+str(bpy.types.Scene.texture_path)+'\n\n')
-	#materialsourcefile.write('\n\n '+str(bpy.context.scene.AnimatorProps.texture_path)+'\n\n')
-
-	# речь идет о нодах изображения, так что:
-	
-		
-        # ~ return
     #############################################################################################################################
   
-
-        
- 
-#############################################################################################################################
-# Экспортировать данные с одного из входов ноды PrincipledBSDF - Base Color, Normal etc:
-# попытаться экспортировать текстуру и описание ее сэмплинга 
-# либо (в т.ч. если некорректная текстура вернула False) выписать данные (о цвете и т.д.) по-умолчанию из ноды PrincipledBSDF
-    def printBSDFInputData(materialsourcefile, input1, self, context):    
+	#############################################################################################################################
+	# Экспортировать данные с одного из входов ноды PrincipledBSDF - Base Color, Normal etc:
+	# попытаться экспортировать текстуру и описание ее сэмплинга 
+	# либо (в т.ч. если некорректная текстура вернула False) выписать данные (о цвете и т.д.) по-умолчанию из ноды PrincipledBSDF
+    def printBSDFInputData(materialsourcefile, input1, self, context, tabs):    
         nodeType = 'none'
         
         if input1.name == 'Base Color':
@@ -1297,7 +1291,7 @@ class exportMaterialClass(bpy.types.Operator):
                
         # если что-то слинковано...
         if input1.is_linked:
-            print('\t\t\t\t\tInfo of linked input: ' + str(nodeType) + '')  
+            print(str(tabs)+'\tInfo of linked input: ' + str(nodeType) + '')  
             
             node = input1.links[0].from_node
             
@@ -1305,7 +1299,7 @@ class exportMaterialClass(bpy.types.Operator):
             
             # 1) текстура может быть назначена сразу через Image Texture
             if node.type == "TEX_IMAGE":
-                inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, node, self, context, nodeType )
+                inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, node, self, context, nodeType, tabs+'\t' )
             
             # 2) еще текстура может быть назначена через миксер с лайтмапой
             if node.type == "MIX_RGB":
@@ -1325,20 +1319,20 @@ class exportMaterialClass(bpy.types.Operator):
                         #materialsourcefile.write('BAKED!!!!' + '\n' )
     
                         if color1_node.type == "TEX_IMAGE":
-                            inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, color1_node, self, context, nodeType )
+                            inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, color1_node, self, context, nodeType, tabs+'\t' )
     
                 #если нода "color2" - diffuse залинкована
                 if node.inputs[2].is_linked:
                     color2_node = node.inputs[2].links[0].from_node #image
                     if color2_node.type == "TEX_IMAGE":
-                        inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, color2_node, self, context, nodeType )      
+                        inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, color2_node, self, context, nodeType, tabs+'\t' )      
             
             # 3) или вообще как normal map
             if node.type == "NORMAL_MAP": # node.inputs[0].name - Strength input, node.inputs[1].name - Color input
                 if node.inputs[1].is_linked: #если нода цвета залинкована
                     normalmapImage = node.inputs[1].links[0].from_node
                     if normalmapImage.type == "TEX_IMAGE":
-                        inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, normalmapImage, self, context, nodeType )
+                        inputExportedSuccessfully = exportMaterialClass.printLinkedImageTextureData( materialsourcefile, normalmapImage, self, context, nodeType, tabs+'\t' )
         
         # а если ничего не слинковано либо текстуру не удалось экспортировать, то inputExportedSuccessfully останется False 
         # и тогда выпишем значения по-умолчанию
@@ -1349,30 +1343,19 @@ class exportMaterialClass(bpy.types.Operator):
 			# а у остальных параметров значение состоит из 1 числа
             if nodeType == 'Metallic' or nodeType == 'Roughness':
                 materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value, ROUND_LEVEL)) + '\nEND\n' )
-#############################################################################################################################  
+	#############################################################################################################################  
             
 
-
-    # ~ def setDefaultMaterial(materialsourcefile):
-        # ~ materialsourcefile.write('\n;\tBaseColor is not setted, so link a default texture\n')
-        # ~ if exportMaterialClass.xSize == 1024:
-            # ~ materialsourcefile.write('\nmap\nBaseColor default_1k.png\n')
-            # ~ materialsourcefile.write('size 1024 1024\n')
-        # ~ if exportMaterialClass.xSize == 2048:
-            # ~ materialsourcefile.write('map\nBaseColor default_2k.png\n')
-            # ~ materialsourcefile.write('size 2048 2048\n')
-#############################################################################################################################
-       
-
-
-    def exportMaterial(OBJECT, self, context):
+    #############################################################################################################################
+    def exportMaterial(OBJECT, self, context, tabs):
 		
         exportMaterialClass.EXPORTED_TEXTURES.clear() # в начале экспорта - очистка списка экспортированных текстур
 		
         for material in OBJECT.data.materials:
-            print('\t\t\t\tNow process material ['+str(material.name)+']')
+            print(str(tabs)+'\tNow process material ['+str(material.name)+']')
             materialName = material.name #обрежем
-
+            materialName = materialName.replace(" ", "_")
+            
             if materialName not in ALREADY_EXPORTED_RESOURCES:
                 ALREADY_EXPORTED_RESOURCES.append(materialName)
                 
@@ -1393,52 +1376,29 @@ class exportMaterialClass(bpy.types.Operator):
                 materialsourcefile.write(';'+str(datetime.datetime.now()) + '\nmaterial '+str(materialName) +'\n')
                 #########################################################
 
-                # ~ exportMaterialClass.LINKS.clear()# = [] #массив для хранения слинкованных карт для данного материала
-                # ~ exportMaterialClass.anyNodeLinked = 'FALSE'
-                # ~ exportMaterialClass.xSize = 1024
-                # ~ exportMaterialClass.xScale = 1.0
+              
 
                 for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Principled BSDF'):
                     for input1 in node.inputs: # пройтись по всем входам ноды BSDF: Base Color, Normal, Emission etc
-                        exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context)
+                        exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context, tabs+'\t')
                 
                 # выпишем инфу о ноде смещения
                 for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Displacement'):
                     for input1 in (input0 for input0 in node.inputs if input0.is_linked):
                         if input1.name == 'Height':
-                            exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context)
+                            exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context, tabs+'\t')
 
-                # ~ if exportMaterialClass.anyNodeLinked == 'FALSE':
-                    # ~ exportMaterialClass.setDefaultMaterial(materialsourcefile)
+                
 
-                #materialsourcefile.write(str(exportMaterialClass.LINKS) + '\n')
                 #EXPORTED_ASSETS.append(materialName)
 
                 materialsourcefile.close()
-    ## FUNC END #########################################################
-
-
-    def createTextureNode(objMaterialName):
-        bsdf = bpy.data.materials[objMaterialName].node_tree.nodes['Principled BSDF']
-        texImage    = bpy.data.materials[objMaterialName].node_tree.nodes.new('ShaderNodeTexImage')     # создадим новую ноду изображения
-        texImage.location.x = bsdf.location.x-350
-        texImage.location.y = bsdf.location.y+10
-
-        textureName = 'T_Default_1k.png'  # имя стандартной текстуры для любого объекта
-        if textureName in (image.name for image in bpy.data.images):            # если такая картинка существует
-            texImage.image = bpy.data.images[textureName]
-        else:                                                                   # если такой картинки нет, то создадим
-            bpy.ops.image.new(name=textureName, width=1024, height=1024, color=(1.0, 0.0, 0.0, 1.0), alpha=True, generated_type='UV_GRID', float=False, use_stereo_3d=False, tiled=False)
-            image = bpy.data.images[textureName]
-            image.file_format = "PNG"
-            texImage.image = image
-        # теперь слинкуем изображение с BSDF
-        bpy.data.materials[objMaterialName].node_tree.links.new(bsdf.inputs['Base Color'],  texImage.outputs['Color'])
+	#############################################################################################################################  
 
 
     def configureMaterial(OBJECT, tabs): #-- функция назначает материал если оный не назначен
         slotID = 0
-        print( str(tabs)+'\tConfigure materials..')
+        print(str(tabs)+'\tConfigure materials..')
         for slot in (mat for mat in OBJECT.data.materials if OBJECT.data.materials):
             if slot == None:                                                        # если слот материала пуст
                 print( str(tabs) + '\tSlot is empty, try to attach new material')
@@ -1448,7 +1408,7 @@ class exportMaterialClass(bpy.types.Operator):
                     new_mat.use_nodes = True
                 slotMaterial = bpy.data.materials[objMaterialName]                  # запомним созданный материал
             else:
-                print( str(tabs) + '\tSlot [' + str(slotID) + '] attached material: [' + str(slot.name)+']')
+                print( str(tabs) + '\t\tSlot [' + str(slotID) + '] attached material: [' + str(slot.name)+']')
                 slotMaterial = slot
 
             #-- настройка нового или отладка существующего материала slotMaterial
@@ -1476,7 +1436,7 @@ class exportMaterialClass(bpy.types.Operator):
             OBJECT.data.materials[slotID] = slotMaterial
             slotID = slotID + 1
         print( str(tabs)+'\tMaterials configured!\n')
-
+	#############################################################################################################################  
 
 
 
@@ -1500,12 +1460,12 @@ class ExportObject(bpy.types.Operator):
         b = ExportObject.CmulCXYZW(a, qinv)
         return b
     
-    def printObjectLocationRotation(Object):
+    def printObjectLocationRotation(Object, tabs):
         loc = Object.location
         quat = Object.rotation_quaternion
-        print('\n['+str(Object.name)+'] coordinates:')
-        print('\tposition ' + str(round(loc[0], ROUND_LEVEL)) + ' ' + str(round(loc[1], ROUND_LEVEL)) + ' ' + str(round(loc[2], ROUND_LEVEL)) + '' ) #position
-        print('\tdirection ' + str(round(quat.w, ROUND_LEVEL)) +  ' ' + str(round(quat.x, ROUND_LEVEL)) + ' ' +  str(round(quat.y,ROUND_LEVEL)) + ' ' + str(round(quat.z, ROUND_LEVEL)) +   '\n') #direction
+        print('\n' + str(tabs) + '['+str(Object.name)+'] coordinates:')
+        print(str(tabs) + '\t\t\t\tposition ' + str(round(loc[0], ROUND_LEVEL)) + ' ' + str(round(loc[1], ROUND_LEVEL)) + ' ' + str(round(loc[2], ROUND_LEVEL)) + '' ) #position
+        print(str(tabs) + '\t\t\t\tdirection ' + str(round(quat.w, ROUND_LEVEL)) +  ' ' + str(round(quat.x, ROUND_LEVEL)) + ' ' +  str(round(quat.y,ROUND_LEVEL)) + ' ' + str(round(quat.z, ROUND_LEVEL)) +   '\n') #direction
 
     def printAllObjects():
         print('\n------------------------\nbpy.data.objects:')
@@ -1534,10 +1494,10 @@ class ExportObject(bpy.types.Operator):
                         fileToWrite.write('type 2' + ' emission\n')
     
     ## export object as a text block for runtime-loading (as level.ltx) #######################################################
-    def printObjectRuntimeLike(fileToWrite, loc, quat, OBJECT, self, context):
+    def printObjectRuntimeLike(fileToWrite, loc, quat, OBJECT, self, context, serial):
         # ~ print('\nexport object as a text block for runtime-loading (as level.ltx)\n')
         
-        fileToWrite.write('\n[' + str(0) + '] '+  str('MESH') +'\n')                #начало блока
+        fileToWrite.write('\n[' + str(serial) + '] '+  str('MESH') +'\n')                #начало блока
         fileToWrite.write('sysname ' + str(OBJECT.name) + '\n')
         fileToWrite.write('position ' + str(round(loc[0], ROUND_LEVEL)) + ' ' + str(round(loc[1], ROUND_LEVEL)) + ' ' + str(round(loc[2], ROUND_LEVEL)) + '\n' ) #position
         fileToWrite.write('direction ' + str(round(quat.w, ROUND_LEVEL)) +  ' ' + str(round(quat.x, ROUND_LEVEL)) + ' ' +  str(round(quat.y,ROUND_LEVEL)) + ' ' + str(round(quat.z, ROUND_LEVEL)) +   '\n') #direction
@@ -1546,9 +1506,9 @@ class ExportObject(bpy.types.Operator):
 
 
         name = OBJECT.data.name
-        if name[len(name)-4] == '.' :   #обрезаем точку и номер
-            name = name[0:len(name)-4]
-            
+        # ~ if name[len(name)-4] == '.' :   #обрезаем точку и номер
+            # ~ name = name[0:len(name)-4]
+        name.replace(".", "_")
         ####if name[len(name)-2] == '_' :   #обрезаем _temp
         ####    name = name[0:len(name)-2]
 
@@ -1557,7 +1517,8 @@ class ExportObject(bpy.types.Operator):
         for material in OBJECT.data.materials:
             if material != None:
                 # -- здесь возможно надо будет обрезать точки
-                fileToWrite.write('material '+ str(material.name)+'\n')
+                #materialName = materialName.replace(" ", "_")
+                fileToWrite.write('material '+ str(material.name.replace(" ", "_"))+'\n')
                 ExportObject.checkMaterialAlphaEmission(fileToWrite, material.name)
             else:
                 fileToWrite.write('material default_1k\n')
@@ -1653,14 +1614,16 @@ class ExportObject(bpy.types.Operator):
     ## FUNC END #########################################################
 
     
-    def exportObjectDescription(OBJECT, PARENT, self, context):
+    def exportObjectDescription(OBJECT, PARENT, self, context, tabs, serial):
         if OBJECT.type == 'MESH':                           # если обрабатываемый объект коллекции - меш, то уточним для него кватернион с локацией и виден ли он вообще?
             existFlag = 0
             quaternion = OBJECT.rotation_quaternion
             location = OBJECT.location
 
-            print('Name: ' + str(OBJECT.name))
-            ExportObject.printObjectLocationRotation(OBJECT)
+            tabs += '\t'
+
+            print( str(tabs) + 'Name: ' + str(OBJECT.name))
+            ExportObject.printObjectLocationRotation(OBJECT, tabs+'\t\t')
 
             # родитель либо связан в блендере либо это объект слинкованной коллекции. Приоритет у блендеровского родителя
             parent = OBJECT.parent if OBJECT.parent else (PARENT if PARENT else None)
@@ -1668,7 +1631,7 @@ class ExportObject(bpy.types.Operator):
 
             if parent: #OBJECT.parent:
                 print('Has parent: ' + str(parent))
-                ExportObject.printObjectLocationRotation(parent)
+                ExportObject.printObjectLocationRotation(parent, tabs+'\t\t')
                 
                 if parent.hide_get() == False:
                     existFlag = 1
@@ -1699,7 +1662,7 @@ class ExportObject(bpy.types.Operator):
 
             # ~ if PARENT not None
 
-            print('\tResult position ' + str(round(location[0], ROUND_LEVEL)) + ' ' + str(round(location[1], ROUND_LEVEL)) + ' ' + str(round(location[2], ROUND_LEVEL)) + '' ) #position
+            print(str(tabs)+'Position: ' + str(round(location[0], ROUND_LEVEL)) + ' ' + str(round(location[1], ROUND_LEVEL)) + ' ' + str(round(location[2], ROUND_LEVEL)) + '' ) #position
 
 
             if existFlag == 1:  #если объект видим, то выпишем его параметры согласно выбранному типу экспорта
@@ -1711,7 +1674,7 @@ class ExportObject(bpy.types.Operator):
                         if OBJECT.name.find("UCX") == -1: # экспортируем меш, только если это не ААВВ-коробка (т.е. UCX не найдено в названии)
 
                             if context.scene.setType == "0": # выпишем в файл описания уровня его параметры runtime-like
-                                ExportObject.printObjectRuntimeLike( LevelDescription, location, quaternion, OBJECT, self, context )
+                                ExportObject.printObjectRuntimeLike( LevelDescription, location, quaternion, OBJECT, self, context, serial )
 
                             if context.scene.setType == "1": # выпишем в файл описания уровня его параметры code-like 1 - через структуру
                                 ExportObject.printObjectCodeLikeInStruct(LevelDescription, location, quaternion, OBJECT, self, context)
@@ -1788,28 +1751,34 @@ class ExportObject(bpy.types.Operator):
         return obj_copy
     
     
-    def exportOneObjectData(Object, Parent, self, context, tabs):
-        print( ''+str(tabs) + '\t\tExport object [' + str(Object.name) + '] start: ')
+    def exportOneObjectData(Object, Parent, self, context, tabs, serial):
+        #
+        print( str(tabs) + '▼Export object [' + str(Object.name) + '] start: ')
 
+        #tabs += '\t'
+        
         # 2.1 configure and export object materials
-        exportMaterialClass.configureMaterial(Object, tabs)
+        print(str(tabs+'\t')+'1) Materials...')
+        exportMaterialClass.configureMaterial(Object, tabs+'\t')
         if context.scene.bMaterials == True:                                            # по галочке
-            print(str(tabs)+'\t\t\tMaterials...')
-            exportMaterialClass.exportMaterial(Object, self, context)                   # материалы для этого объекта
+            exportMaterialClass.exportMaterial(Object, self, context, tabs+'\t')                   # материалы для этого объекта
 
         # 2.2 export object description
         if context.scene.bExportLevel:                                                  # по галочке запишем в файл
-            print(str(tabs)+'\t\t\tDescription...')
-            ExportObject.exportObjectDescription(Object, Parent, self, context)
+            print('\n'+str(tabs+'\t')+'2) Description...')
+            ExportObject.exportObjectDescription(Object, Parent, self, context, tabs+'\t', serial)
 
         # 2.3 export object model after aplying (or not) modificators
         if context.scene.bModelsAsText == True or context.scene.bModelsAsBinary == True:
-            print(str(tabs)+'\t\t\tMesh...')
-            exportMeshClass.export_model(self, context, Object)                         # по галочке
+            print('\n'+str(tabs+'\t')+'3) Mesh...')
+            exportMeshClass.export_model(self, context, Object, tabs+'\t')                         # по галочке
+        
+        print('\n'+ str(tabs) + '▲Export object [' + str(Object.name) + '] end.')
+
     
-    
-    def exportOneObject(head, tail, OBJECT, self, context, tabs): # рассмотрим объект коллекции из уровня
-        print( '\n'+str(tabs)+'___________________________________\n' + str(tabs) + '|Exporting one object ['+str(OBJECT.name)+']')
+    def exportOneObject(head, tail, OBJECT, self, context, tabs, serial): # рассмотрим объект коллекции из уровня
+        print( '\n' + str(tabs)+'▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬')
+        print( str(tabs) + '▼Exporting single object ['+str(OBJECT.name)+']:')
         
         # получили шапку, хвост и надо экспортировать все наши объекты
         # принятый OBJECT может быть местной моделькой (с модификаторами или без) или привязанным ассетом
@@ -1817,7 +1786,7 @@ class ExportObject(bpy.types.Operator):
         ###EXPORTING = []                                                                      # list of objects which need to be exported
         DUPLICATES_MESHES_NAMES = []                                                        # list of newly created meshes which need to be removed at the end
       
-        
+        #tabs += '\t'
         # 1 make current object active
         bpy.ops.object.select_all(action='DESELECT')                                        # снимем выделение со всего
         OBJECT.select_set(True)                                                             # выберем только текущий объект
@@ -1826,41 +1795,41 @@ class ExportObject(bpy.types.Operator):
         
         # 2 ready если простой меш без модификаторов
         if OBJECT.type == 'MESH' and not OBJECT.modifiers:
-            print( str(tabs) + '\tExport simple MESH [' + str(OBJECT.name) + '] start:')
+            print( str(tabs+'\t') + 'This is simple MESH [' + str(OBJECT.name) + '].')
             ###EXPORTING.append(OBJECT)
-            ExportObject.exportOneObjectData(OBJECT, None, self, context, tabs)
+            ExportObject.exportOneObjectData(OBJECT, None, self, context, tabs+'\t', serial)
             ###print( str(tabs) + '\tExport simple MESH [' + str(OBJECT.name) + '] done!')
                  
         # 3 ready если меш с модификаторами
         if OBJECT.type == 'MESH' and OBJECT.modifiers:# and context.scene.bApplyMeshModifiers == True:
-            print( str(tabs) + '\tExport modified MESH [' + str(OBJECT.name) + '] start:')
+            print( str(tabs+'\t') + 'This is modificatored MESH [' + str(OBJECT.name) + '].')
             copy = ExportObject.apply_modifiers_to_duplicate(OBJECT, None)
             ###EXPORTING.append(copy)
-            ExportObject.exportOneObjectData(copy, None, self, context, tabs)
+            ExportObject.exportOneObjectData(copy, None, self, context, tabs+'\t', serial)
             DUPLICATES_MESHES_NAMES.append(copy.data.name)                
             ###print( str(tabs) + '\tExport modified MESH [' + str(OBJECT.name) + '] done!')
                   
         # 4 ready если слинкованная коллекция (AI-generated)
         if OBJECT.instance_type == 'COLLECTION' and OBJECT.instance_collection:
-            print( str(tabs) + '\t1) Export linked asset [' + str(OBJECT.name) + '] start:')
+            print( str(tabs+'\t') + 'This is asset from linked collection [' + str(OBJECT.name) + '].')
             ###print( str(tabs) + '\t\tType: ' + OBJECT.instance_type)
             ###print( str(tabs) + '\t\tCollection: ' + OBJECT.instance_collection.name)
         
             # Получаем все объекты из этой коллекции
             for sub in OBJECT.instance_collection.objects:
-                print(str(tabs)+'\t\t%s: %s'%(sub.type, sub.name))
+                print(str(tabs+'\t')+'\t\t%s: %s'%(sub.type, sub.name))
                 
                 # если модификаторов нет, просто заносим объект в экспортный список
                 if not sub.modifiers:
-                    print(str(tabs)+'\t\t\tNo modifiers')
+                    print(str(tabs+'\t')+'\t\t\tNo modifiers')
                     ###EXPORTING.append(sub) # у этого sub координаты берутся из файла ассета, т.е как правило, в начале мира! а надо учесть смещение коллекции OBJECT
-                    ExportObject.exportOneObjectData(sub, OBJECT, self, context, tabs)
+                    ExportObject.exportOneObjectData(sub, OBJECT, self, context, tabs+'\t', serial)
                     
                 else: # если меш имеет модификаторы, сделаем его копию
-                    print(str(tabs)+'\t\t\tMake duplicates')
+                    print(str(tabs+'\t')+'\t\t\tMake duplicates')
                     copy = ExportObject.apply_modifiers_to_duplicate(sub, OBJECT)
                     ###EXPORTING.append(copy)
-                    ExportObject.exportOneObjectData(copy, OBJECT, self, context, tabs)
+                    ExportObject.exportOneObjectData(copy, OBJECT, self, context, tabs+'\t', serial)
                     DUPLICATES_MESHES_NAMES.append(copy.data.name)
             ###print( str(tabs) + '\tExport linked asset [' + str(OBJECT.name) + '] done!')
       
@@ -1893,11 +1862,11 @@ class ExportObject(bpy.types.Operator):
         
 
         # 5 clear temporaries
-        print(''+str(tabs) + '\t5) Clearing duplicates...')
+        print('\n'+str(tabs+'\t') + '╫Clearing duplicates...')
         #-- DUPLICATES_MESHES_NAMES хранит имена мешей дубликатов. Если они не из слинкованной библиотеки, то надо удалить!
         for mesh in (m for m in bpy.data.meshes if m.name in DUPLICATES_MESHES_NAMES): #and m.library == None
             if mesh.library == None:
-                print(str(tabs)+'\t\tRemove mesh ' + str(mesh) + ', lib: ' + str(mesh.library) )
+                print(str(tabs+'\t')+'\t\tRemove mesh ' + str(mesh) + ', lib: ' + str(mesh.library) )
                 bpy.data.meshes.remove(mesh)
                 
 						# ~ for arm in (m for m in bpy.data.armatures if m.name in TEMPORARY_MESHES and m.library == None):
@@ -1906,9 +1875,9 @@ class ExportObject(bpy.types.Operator):
         # 6 end of function
         #print( str(tabs) + 'Solo object: [' + str(OBJECT.name) + '], exported!')
         
-        print( str(tabs) + '|Exporting one object ['+str(OBJECT.name)+'] done!\n'+str(tabs)+'----------------------------------')
+        print('\n'+ str(tabs) + '▲Exporting single object ['+str(OBJECT.name)+'] done!\n'+str(tabs)+'▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬')
 
-## end ###################
+    ## end ###################
 
 
     
@@ -1916,7 +1885,7 @@ class ExportObject(bpy.types.Operator):
         ALREADY_EXPORTED_RESOURCES.clear()
         activeObject = bpy.context.active_object        # выберем объект
         if activeObject:
-            ExportObject.exportOneObject('','', activeObject, self, context, '')
+            ExportObject.exportOneObject('','', activeObject, self, context, '', 0)
             title = 'Object [' + str(activeObject.name) + '] exported as [' + str(activeObject.name) + ']!'
             ShowMessageBox(title, 'Mesh log:', 'BLENDER')
         else:
@@ -1950,6 +1919,9 @@ class ExportCollection(bpy.types.Operator):
         
         # ~ LevelDescription = open(context.scene.collectionFolder, 'w')
 
+        EXPORTED_OBJECTS = []
+        tabb = ''
+        serial = 0
         
         # only if check mark "Export Level to file" is true, update it 
         if context.scene.bExportLevel:
@@ -1988,20 +1960,37 @@ class ExportCollection(bpy.types.Operator):
             
             # 0-й уровень: переберем видимые объекты выбранной главной коллекции mycollection
             for OBJECT in (obj0 for obj0 in mainSelectedCollection.objects if obj0.hide_viewport==False) :
-                ExportObject.exportOneObject(head, tail, OBJECT, self, context, '\t')
+                ExportObject.exportOneObject(head, tail, OBJECT, self, context, '\t', serial)
+                serial += 1
+                #EXPORTED_OBJECTS.append(OBJECT)
+                #tabb = '\t'
 
             # 1-й уровень: переберем дочерние видимые (монитор) коллекции
             for subCollection in  (collection_1 for collection_1 in mainSelectedCollection.children if collection_1.hide_viewport == False) :
                 # 2-й уровень: переберем видимые объекты дочерней коллекции
                 for subObject in (obj2 for obj2 in subCollection.objects if obj2.hide_viewport == False) :		#hide_get()==False):
-                    ExportObject.exportOneObject(head, tail, subObject, self, context, '\t\t')
+                    ExportObject.exportOneObject(head, tail, subObject, self, context, '\t\t', serial)
+                    serial += 1
+                    #EXPORTED_OBJECTS.append(subObject)
+                    #tabb = '\t\t'
 
                 # 2-й уровень: переберем дочерние коллекции данной дочерней коллекции
                 for subSubCollection in ( subcollection_1 for subcollection_1 in subCollection.children if subcollection_1.hide_viewport == False):
                     # 3-й уровень: переберем видимые объекты данной поддочерней коллекции
                     for subSubObject in (obj3 for obj3 in subSubCollection.objects if obj3.hide_viewport == False ):		#hide_get()==False):
-                        ExportObject.exportOneObject(head, tail, subSubObject, self, context,'\t\t\t')
+                        ExportObject.exportOneObject(head, tail, subSubObject, self, context,'\t\t\t', serial)
+                        serial += 1
+                        #EXPORTED_OBJECTS.append(subSubObject)
+                        #tabb = '\t\t\t'
         
+        #print('Objects for export: ' + str(len(EXPORTED_OBJECTS)) + ' '  + str(EXPORTED_OBJECTS))
+        #with context.window_manager.progress_begin(0, len(EXPORTED_OBJECTS)) as progress:
+            #i = 0
+        #for obj in EXPORTED_OBJECTS:
+            #ExportObject.exportOneObject(head, tail, obj, self, context, tabb, serial)
+            #progress.update(i)
+            #i = i+1
+                #ShowMessageBox('Processing...'+obj.name, 'Mesh log:', 'BLENDER')
         
         # only if check mark "Export Level to file" is true and export type is runtime-like, add final info 
         if context.scene.bExportLevel and context.scene.setType == "0":                                      
@@ -2010,7 +1999,7 @@ class ExportCollection(bpy.types.Operator):
             LevelDescription.close()
         
         print('\nCollection [%s] exported!'%(context.scene.selectedCollection.name))     
-        ShowMessageBox('Collection exported', 'Mesh log:', 'BLENDER')
+        #ShowMessageBox('Collection exported', 'Mesh log:', 'BLENDER')
         return {'FINISHED'}    
 
 
@@ -2066,6 +2055,9 @@ class interfaceDescriptionClass(PropertyGroup):
 
     bpy.types.Scene.bMaterials      = bpy.props.BoolProperty(name="Export materials", description="enable exporting materials", default = False)
     bpy.types.Scene.bTextures       = bpy.props.BoolProperty(name="Save used textures", description="enable exporting textures", default = False)
+    bpy.types.Scene.bResizeTextures = bpy.props.BoolProperty(name="Resize", description="enable textures resizing", default = False)
+    bpy.types.Scene.eResizedTextureSize        = bpy.props.EnumProperty( name="Target size", description="Choose texture size after resizing",   items=  [ ("1", "256", ""), ("2", "512", ""), ("4", "1024", ""), ("8", "2048", ""), ("16", "4096", "") ], default="1"  )
+
 
     bpy.types.Scene.bRewrite        = bpy.props.BoolProperty(name="Rewrite existing assets", description="enable rewriting assets", default = False)
 
@@ -2147,8 +2139,19 @@ class VisualDescription(bpy.types.Panel):
         layout.prop(scene, "bModelsAsBinary")
         # ~ layout.prop(scene, "bApplyMeshModifiers")
         layout.prop(scene, "bMaterials")
-        layout.prop(scene, "bTextures")
-        
+        layout.prop(scene, "bTextures", emboss=True)
+        split = layout.split(factor=0.35)  # левая часть = 20% ширины
+        col_left = split.column()
+        col_right = split.column()
+
+        # ~ col_left.label(text="Resize:")    # подпись отдельно
+        col_left.prop(scene, "bResizeTextures", toggle=True)
+        # ~ layout.prop(scene, "bResizeTextures", toggle=True)
+        # ~ row = layout.row()
+        # ~ row.label(text="")              # пустой лейбл даёт отступ
+        col_right.prop(scene, "eResizedTextureSize", expand=False)
+
+
         layout.prop(scene, "bBakeLightmaps")
         layout.prop(scene, "bDraftLightmaps")
         layout.prop(scene, "bExportLightmaps")
