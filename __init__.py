@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "CEAE v0.4.10",
+    "name": "CEAE v0.5.0",
     "author": "Paul",
-    "version": (0,4,10),
+    "version": (0,5,0),
     "blender": (4,0,2),
     "category": "Indoostrialniy",
-    "description": "30.10.2026. This addon helps to export assets to custom engine",
+    "description": "05.11.2026. This addon helps to export assets to custom engine",
 }
 
 
@@ -14,6 +14,8 @@ import math
 import mathutils
 import numpy as np
 import datetime
+import re
+import hashlib
 
 from array import array
 from bpy.props import (StringProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, EnumProperty, PointerProperty)
@@ -27,6 +29,11 @@ ROUND_LEVEL = 4
 runtimeCounter = 0
 
 ALREADY_EXPORTED_RESOURCES = []
+PREDTECHI = []
+
+
+# Реестр имён, розданных за текущую сессию экспорта
+_used_mesh_names = set()
 
 def ShowMessageBox(message = "", title = "", icon = ""):
     def draw(self, context):
@@ -812,6 +819,25 @@ class exportMeshClass(bpy.types.Operator):
             print('NOT triangulated')
             return 0
     ## FUNC END #########################################################
+    
+    ## FUNC START #######################################################
+    def meshTriangulated_adv(mesh, tabs):
+        triangles = 0
+        quads = 0
+
+        for polygon in mesh.polygons:
+            if len(polygon.vertices) == 3:
+                triangles += 1
+            if len(polygon.vertices) == 4:
+                quads += 1
+
+        if triangles > 0 and quads == 0:
+            #print( str(tabs) + '[%s] triangulated'%(mesh))
+            return 1
+        if quads > 0 and triangles == 0:
+            #print('NOT triangulated')
+            return 0
+    ## FUNC END #########################################################
 
 
     ## FUNC START #######################################################
@@ -1122,9 +1148,212 @@ class exportMeshClass(bpy.types.Operator):
             #console.write("slkgndsldsnnsdlngds")
 
             #exportMeshClass.ShowMessageBox(log, 'Mesh log:', 'BLENDER')
-            print(str(tabs) + 'Mesh exported successfully!')
+            print(str(tabs) + 'Mesh [%s] exported successfully!'%(name_mesh))
 
         return meshPath
+    ## FUNC END #########################################################
+
+    ## FUNC START #######################################################
+    def export_model_adv(self, context, mesh, tabs):  #сюда пришел указатель на объект меша, в том числе дубликата!
+        #tabs += '\t'
+        slash = '/' if context.scene.operationSystem == "0" else '\\'
+        name_mesh = mesh.name
+        name_mesh.replace(".", "_")
+        meshPath = context.scene.projectFolder + slash + 'meshes' + slash + name_mesh
+        
+        count_of_verts = len(mesh.vertices)
+        count_of_faces = len(mesh.polygons)
+        
+        # 1
+        # проверки
+        if count_of_verts < 1 or count_of_faces < 1:
+            print(str(tabs) + 'Mesh ' + str(name_mesh) + ' has no vertices/faces, skip')
+            return
+        
+        if exportMeshClass.meshTriangulated_adv(mesh, tabs) == 0:
+            print(str(tabs) + 'Mesh ' + str(name_mesh) + ' not triangulated, skip')
+            return
+            
+        if len(mesh.uv_layers) < 1:
+            print(str(tabs) + 'Mesh ' + str(name_mesh) + ' has no UV map, skip')
+            return
+            
+        def writeb(value):
+            if context.scene.bModelsAsBinary == True:
+                float_value = array('f', [value])
+                float_value.tofile(file_model_bin)
+        
+        # 2
+        # файл открыть
+        try:
+            meshesPath    = context.scene.projectFolder + slash + 'meshes' + slash
+
+            if context.scene.bModelsAsText == True:
+                file_model = open(meshesPath + name_mesh + '.ltx', 'w')
+
+            if context.scene.bModelsAsBinary == True:
+                file_model_bin = open(meshesPath + name_mesh + '.model', 'wb')
+        except:
+            print('exportMesh() cannot create files, check path\n')
+            return
+        
+        # 3
+        # шапка
+        if context.scene.bModelsAsText == True:
+            file_model.write(str(datetime.datetime.now())+'\n')
+            file_model.write('faces ' + str(count_of_faces)+'\n')
+            file_model.write('vertices ' + str(count_of_faces*3)+'\n')
+            file_model.write('\n;vertex array for glDrawArrays:\n; x y z nx ny nz u v material_index and 4 couples boneIndex-weight' + '\n')
+       
+        if context.scene.bModelsAsBinary == True:     
+            writeb(count_of_faces)
+            writeb(count_of_faces*3)
+            # для записи имении скелета выделим 32 символа - 32 байта
+            # самыйдлинныйидентификаторскелета.лтх
+            # ~ if level_object.parent and level_object.parent.type=='ARMATURE': #если объект имеет родителя и родитель - кость:
+                # ~ if context.scene.bModelsAsText == True:
+                    # ~ file_model.write('skeleton ' + str(level_object.parent.name) + '\n')
+
+                # ~ skeletonName = level_object.parent.name
+                # ~ while len(skeletonName) < 32:
+                    # ~ skeletonName += ' '
+                # ~ if context.scene.bModelsAsBinary == True:
+                    # ~ file_model_bin.write(skeletonName.encode('utf8'))
+            # ~ else:
+            file_model_bin.write(b"noskeleton                      ")
+            writeb(0) # вместо AABB-коробки
+        
+        # 4
+        # datas
+        #version without bones
+        K = 1.0
+        tris = 0
+        for triangle in mesh.polygons:
+            tris=tris+1
+            a=0
+            for vert in triangle.vertices: # перебираем индексы вершин треугольника
+                uvCoord1 = mesh.uv_layers[0].data[triangle.index*3+a].uv
+                a = a+1
+                u1 = round(uvCoord1[0], 4)
+                v1 = round(uvCoord1[1], 4)
+                if u1 < 0.001: #избавимся от машинных нулей
+                    u1 = 0
+                if v1 < 0.001:
+                    v1 = 0
+
+                if context.scene.bModelsAsText == True:
+                    file_model.write('v ' + str(round( K * mesh.vertices[vert].co[0], ROUND_LEVEL)) + ' ' + str(round( K * mesh.vertices[vert].co[1],ROUND_LEVEL)) + ' ' + str(round( K * mesh.vertices[vert].co[2],ROUND_LEVEL)) +' ')
+                
+                if context.scene.bModelsAsBinary == True:
+                    writeb( round( K * mesh.vertices[vert].co[0], ROUND_LEVEL))
+                    writeb( round( K * mesh.vertices[vert].co[1], ROUND_LEVEL))
+                    writeb( round( K * mesh.vertices[vert].co[2], ROUND_LEVEL))
+
+                if context.scene.export_normals_from == '1':
+                    mynormal = triangle.normal
+                else:
+                    mynormal = mesh.vertices[vert].normal
+
+                if context.scene.bModelsAsText == True:
+                    file_model.write(str(round( mynormal[0],ROUND_LEVEL)) + ' ' + str(round( mynormal[1],ROUND_LEVEL)) + ' ' + str(round( mynormal[2],ROUND_LEVEL))+' ' + str(u1) + ' ' + str(v1) + ' ' + str(triangle.material_index) + '\n')
+
+                if context.scene.bModelsAsBinary == True:
+                    writeb( round( mynormal[0],ROUND_LEVEL))
+                    writeb( round( mynormal[1],ROUND_LEVEL))
+                    writeb( round( mynormal[2],ROUND_LEVEL))
+                    writeb(u1)
+                    writeb(v1)
+                    writeb(triangle.material_index)
+                
+                # вынесли всю инфу по самим вершинам, теперь надо кости и их веса
+                # ~ writeb(0)
+                # ~ writeb(0)
+                # ~ writeb(0)
+                # ~ writeb(0)
+                # ~ writeb(0)
+                # ~ writeb(0)
+                # ~ writeb(0)
+                # ~ writeb(0)
+                j = 0
+        
+        
+        # 5
+        # файл закрыть
+        if context.scene.bModelsAsText == True:
+            file_model.close()
+
+        if context.scene.bModelsAsBinary == True:
+            file_model_bin.close()
+        
+        print(str(tabs) + 'Mesh [%s] exported successfully!'%(name_mesh))
+
+        return 
+        
+        
+
+            
+            
+            
+
+            
+          
+		# ~ K = 1   #float(context.scene.coefficient)  #коэффициент масштаба экспортируемых вершин и прочего
+
+		# ~ V_GROUPS = [group.name for group in level_object.vertex_groups ]
+
+		# ~ if level_object.parent and level_object.parent.type == 'ARMATURE':
+			# ~ BONES = [bone.name for bone in level_object.parent.pose.bones ]
+
+		# ~ boneCheckCounter = 0
+
+		# ~ print('Almost done')
+
+            
+
+
+                        # ~ if level_object.parent and level_object.parent.type == 'ARMATURE':
+                            # ~ pointBone = 0
+                            # ~ for attached_group in obj_verts[vert].groups:      #переберем группы, в которых состоит данная вершина (vert)
+
+                                # ~ attached_group_index = attached_group.group    #индекс группы
+                                # ~ attached_group_weight = attached_group.weight  #вес группы
+                                # ~ #но записать сразу индекс группы не вариант, ибо групп может быть больше, чем костей. Надо определить индекс именно кости
+                                # ~ group_name = V_GROUPS[attached_group_index]    #по индексу группы определим имя этой самой группы
+                                # ~ bone_index = 0
+        
+                                # ~ try:    #если среди КОСТЕЙ есть кость с именем, как у группы group_name, то
+                                    # ~ bone_index = BONES.index(group_name)           #возьмем индекс конкретно этой кости, без учета других групп
+
+                                    # ~ if context.scene.bModelsAsText == True:
+                                        # ~ file_model.write('' + str(bone_index) + ' ' + str(round(attached_group_weight,4)) +' ' )
+
+                                    # ~ writeb(bone_index)
+                                    # ~ writeb(round(attached_group_weight,4))
+                                    # ~ pointBone = pointBone + 1
+                                # ~ except:
+                                    # ~ c=0 #заглушка
+                                
+                                # ~ if pointBone > 6:
+                                    # ~ boneCheckCounter = boneCheckCounter+1
+
+                            # ~ while pointBone < 7:
+                                # ~ if context.scene.bModelsAsText == True:
+                                    # ~ file_model.write(' 0 0')
+                                # ~ writeb(0)
+                                # ~ writeb(0)
+                                # ~ pointBone = pointBone + 1
+
+                        # ~ #######################################################################
+                        # ~ if context.scene.bModelsAsText == True:
+                            # ~ file_model.write('\n')
+
+
+
+            
+                
+            # ~ print(str(tabs) + 'Mesh [%s] exported successfully!'%(name_mesh))
+
+        # ~ return meshPath
     ## FUNC END #########################################################
 
     
@@ -1179,7 +1408,7 @@ class exportMaterialClass(bpy.types.Operator):
             # ~ print(str(tabs) + ' texture already exported previosly!')
             # ~ return False #возвращаемся из функции, ибо данна модель уже была ранее экспортирована
         
-        # 1) экспортируем сам файл (при возможности)
+        # 1) экспортируем сам файл (при возможности)        
         if context.scene.bTextures == True and imageName not in exportMaterialClass.EXPORTED_TEXTURES:
             slash = '/' if context.scene.operationSystem == "0" else '\\'
             texturesPath    = context.scene.projectFolder + slash + 'textures' + slash
@@ -1188,29 +1417,16 @@ class exportMaterialClass(bpy.types.Operator):
             if img.image:
                 if img.image.size[0] > 0 and img.image.size[1] > 0:
                     #print('Texture is loaded and has valid size')
-    # ~ bpy.types.Scene.eResizedTextureSize        = bpy.props.EnumProperty( name="Target size", description="Choose texture size after resizing",   items=  [ ("1", "256", ""), ("2", "512", ""), ("4", "1024", ""), ("8", "2048", ""), ("16", "4096", "") ], default="1"  )
                     if context.scene.bResizeTextures == True:
-                        ## scale image
+                        # scale image
                         orig = img.image
-                        #target_w, target_h = 256, 256
                         target_w, target_h = int(context.scene.eResizedTextureSize)*256, int(context.scene.eResizedTextureSize)*256
-                        # Создаём новый блок данных изображения (пустой, нужного размера)
-                        dup = img.image.copy() #bpy.data.images.new(name="temp_resized", width=target_w, height=target_h)#, alpha=orig.use_alpha)
-                    
+                        dup = img.image.copy()                     
                         dup.scale(target_w, target_h)  # ресемплинг внутри Blender
-                        # Копируем пиксели из оригинала в новый (в Blender пиксели — это плоский массив RGBA)
-                        # Важно: у dup.pixels сначала нужно задать длину (при создании она уже правильная)
-                        #dup.pixels = orig.pixels[:]  # копируем все пиксели
-
-                        # Теперь масштабируем уже дубликат (ресемплинг)
-                        #dup.scale(target_w, target_h)
-
                         # Сохраняем именно дубликат
                         dup.save_render(filename)
-
                         # Удаляем временный дубликат из памяти Blender
                         bpy.data.images.remove(dup)
-                        ##
                     else:
                         img.image.save_render(filename)
                          
@@ -1223,9 +1439,13 @@ class exportMaterialClass(bpy.types.Operator):
                 print('\t\t\t\t\t\tNode [' + str(nodeType) + '] has no attached image at all!')
                 return False
         else:
-            print(str(tabs) + ' texture already exported previosly or not needed!')
+            print(str(tabs) + '\t\tTexture [%s] already exported previosly or not needed!'%(imageName))
         
-        # если текстура существует и была успешно экспортирована, то:
+        if not img.image or not (img.image.size[0] > 0 and img.image.size[1] > 0):
+            print('\t\t\t\t\t\tTexture [' + str(nodeType) + '] has no attached image at all!')
+            return False
+        
+        # если текстура существует и была (или может быть) успешно экспортирована, то:
         # 2) выпишем текстовое описание сэмплинга
         
 
@@ -1291,7 +1511,7 @@ class exportMaterialClass(bpy.types.Operator):
                
         # если что-то слинковано...
         if input1.is_linked:
-            print(str(tabs)+'\tInfo of linked input: ' + str(nodeType) + '')  
+            print(str(tabs)+'\t\tInfo of linked input: ' + str(nodeType) + '')  
             
             node = input1.links[0].from_node
             
@@ -1395,6 +1615,44 @@ class exportMaterialClass(bpy.types.Operator):
                 materialsourcefile.close()
 	#############################################################################################################################  
 
+    #############################################################################################################################
+    def exportMaterial_adv(material, self, context, tabs):
+				
+        print(str(tabs)+'Now process material ['+str(material.name)+']')
+        materialName = material.name #обрежем
+        materialName = materialName.replace(" ", "_")
+            
+        if 1:
+            slash = '/' if context.scene.operationSystem == "0" else '\\'
+            materialPath    = context.scene.projectFolder + slash + 'materials' + slash
+
+            materialsourcefile = open(materialPath + slash + materialName+'.ltx', 'w')
+                # ~ base_path = Path(context.scene.projectFolder)
+                # ~ material_dir = base_path / 'materials'
+
+                # ~ # Создаёт всю цепочку папок, если нет
+                # ~ material_dir.mkdir(parents=True, exist_ok=True)
+
+                # ~ file_path = material_dir / (materialName + '.ltx')
+
+                # ~ with file_path.open('w', encoding='utf-8') as materialsourcefile:
+                    # ~ materialsourcefile.write('ваши данные')
+            materialsourcefile.write(';'+str(datetime.datetime.now()) + '\nmaterial '+str(materialName) +'\n')
+            #########################################################
+            for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Principled BSDF'):
+                for input1 in node.inputs: # пройтись по всем входам ноды BSDF: Base Color, Normal, Emission etc
+                    exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context, tabs)
+                
+            # выпишем инфу о ноде смещения
+            for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Displacement'):
+                for input1 in (input0 for input0 in node.inputs if input0.is_linked):
+                    if input1.name == 'Height':
+                        exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context, tabs)
+            materialsourcefile.close()
+            print(str(tabs) + '\tMaterial [%s] exported successfully!'%(material.name))
+
+	#############################################################################################################################  
+
 
     def configureMaterial(OBJECT, tabs): #-- функция назначает материал если оный не назначен
         slotID = 0
@@ -1439,12 +1697,20 @@ class exportMaterialClass(bpy.types.Operator):
 	#############################################################################################################################  
 
 
+ADV_EXPORTED_OBJECTS = []
+ADV_EXPORTED_MESHES = []
+ADV_EXPORTED_MESHES_DUPLICATES = []
+ADV_EXPORTED_MATERIALS = []
+ADV_EXPORTED_TEXTURES = []
+
 
 # button for one export
 class ExportObject(bpy.types.Operator):
     bl_idname = 'object.export_object' #запуск командой mesh.output_list_of_objects
     bl_label = 'Export data of 1 object.'
     bl_description = "Export marked resources of selected object."
+    
+    DUPLICATES_MESHES_NAMES = []                                                        # list of newly created meshes which need to be removed at the end
     
     def CmulCXYZW(a, b):    #функция для перемножения комплексных чисел, например - кватернионов (в формате w i j k)
         c = [0,0,0,1] #XYZW
@@ -1463,9 +1729,9 @@ class ExportObject(bpy.types.Operator):
     def printObjectLocationRotation(Object, tabs):
         loc = Object.location
         quat = Object.rotation_quaternion
-        print('\n' + str(tabs) + '['+str(Object.name)+'] coordinates:')
-        print(str(tabs) + '\t\t\t\tposition ' + str(round(loc[0], ROUND_LEVEL)) + ' ' + str(round(loc[1], ROUND_LEVEL)) + ' ' + str(round(loc[2], ROUND_LEVEL)) + '' ) #position
-        print(str(tabs) + '\t\t\t\tdirection ' + str(round(quat.w, ROUND_LEVEL)) +  ' ' + str(round(quat.x, ROUND_LEVEL)) + ' ' +  str(round(quat.y,ROUND_LEVEL)) + ' ' + str(round(quat.z, ROUND_LEVEL)) +   '\n') #direction
+        print(str(tabs) + 'Coordinates:')
+        print(str(tabs) + '\tposition ' + str(round(loc[0], ROUND_LEVEL)) + ' ' + str(round(loc[1], ROUND_LEVEL)) + ' ' + str(round(loc[2], ROUND_LEVEL)) + '' ) #position
+        print(str(tabs) + '\tdirectionWXYZ ' + str(round(quat.w, ROUND_LEVEL)) +  ' ' + str(round(quat.x, ROUND_LEVEL)) + ' ' +  str(round(quat.y,ROUND_LEVEL)) + ' ' + str(round(quat.z, ROUND_LEVEL)) +   '\n') #direction
 
     def printAllObjects():
         print('\n------------------------\nbpy.data.objects:')
@@ -1479,7 +1745,6 @@ class ExportObject(bpy.types.Operator):
             print(f"\t{obj.name:<40} library: {str(obj.library):<50}")
         print('------------------------\n')
     
-    
     def checkMaterialAlphaEmission(fileToWrite, materialName):
         material = bpy.data.materials[ materialName ]
         for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Principled BSDF'):
@@ -1492,6 +1757,7 @@ class ExportObject(bpy.types.Operator):
                 if input1.name == 'Emission Strength':
                     if input1.default_value > 0.01:
                         fileToWrite.write('type 2' + ' emission\n')
+        # add check for triplanar mapping  
     
     ## export object as a text block for runtime-loading (as level.ltx) #######################################################
     def printObjectRuntimeLike(fileToWrite, loc, quat, OBJECT, self, context, serial):
@@ -1613,25 +1879,24 @@ class ExportObject(bpy.types.Operator):
         fileToWrite.write('\n\taddEntity( ' + str(varName) + ' );\n')
     ## FUNC END #########################################################
 
-    
     def exportObjectDescription(OBJECT, PARENT, self, context, tabs, serial):
         if OBJECT.type == 'MESH':                           # если обрабатываемый объект коллекции - меш, то уточним для него кватернион с локацией и виден ли он вообще?
             existFlag = 0
             quaternion = OBJECT.rotation_quaternion
             location = OBJECT.location
 
-            tabs += '\t'
+            #tabs += '\t'
 
-            print( str(tabs) + 'Name: ' + str(OBJECT.name))
-            ExportObject.printObjectLocationRotation(OBJECT, tabs+'\t\t')
+            #print( str(tabs) + 'Name: ' + str(OBJECT.name))
+            #ExportObject.printObjectLocationRotation(OBJECT, tabs)
 
             # родитель либо связан в блендере либо это объект слинкованной коллекции. Приоритет у блендеровского родителя
             parent = OBJECT.parent if OBJECT.parent else (PARENT if PARENT else None)
 
 
             if parent: #OBJECT.parent:
-                print('Has parent: ' + str(parent))
-                ExportObject.printObjectLocationRotation(parent, tabs+'\t\t')
+                print(str(tabs)+'\tParent: ' + str(parent))
+                ExportObject.printObjectLocationRotation(parent, tabs+'\t')
                 
                 if parent.hide_get() == False:
                     existFlag = 1
@@ -1662,7 +1927,8 @@ class ExportObject(bpy.types.Operator):
 
             # ~ if PARENT not None
 
-            print(str(tabs)+'Position: ' + str(round(location[0], ROUND_LEVEL)) + ' ' + str(round(location[1], ROUND_LEVEL)) + ' ' + str(round(location[2], ROUND_LEVEL)) + '' ) #position
+            print(str(tabs)+'\tPosition: ' + str(round(location[0], ROUND_LEVEL)) + ' ' + str(round(location[1], ROUND_LEVEL)) + ' ' + str(round(location[2], ROUND_LEVEL)) ) #position
+            print(str(tabs)+'\tRotation: ' + str(round(quaternion.w, ROUND_LEVEL)) + ' ' + str(round(quaternion.x, ROUND_LEVEL)) + ' ' + str(round(quaternion.y, ROUND_LEVEL)) + ' ' + str(round(quaternion.z, ROUND_LEVEL)) + '\n' ) #rotation
 
 
             if existFlag == 1:  #если объект видим, то выпишем его параметры согласно выбранному типу экспорта
@@ -1687,13 +1953,56 @@ class ExportObject(bpy.types.Operator):
                         a=7#EXPORTED_ASSETS.append('Cannot create file for collection description')
     ## FUNC END #########################################################
         
-    
+    # AI
+    def strip_blender_suffix(name: str) -> str:
+        #"""Убирает авто-суффикс Blender вида .001, .002"""
+        return re.sub(r'\.\d{3}$', '', name)
+
+    def mesh_geometry_hash(mesh) -> str:
+        #"""Короткий хеш геометрии — одинаков для одинак мешей в любом файле."""
+        h = hashlib.md5()
+        for v in mesh.vertices:
+            h.update(v.co.copy().freeze().tobytes())
+        for p in mesh.polygons:
+            h.update(bytes(p.vertices))
+        return h.hexdigest()[:8]
+
+    def make_modified_mesh_name(original_mesh_name: str, mesh) -> str:
+        base = ExportObject.strip_blender_suffix(original_mesh_name)
+
+        # Первый модифицированный вариант — просто base_a
+        candidate = f"{base}_a"
+        taken = {m.name for m in bpy.data.meshes} | _used_mesh_names
+
+        if candidate not in taken:
+            _used_mesh_names.add(candidate)
+            return candidate
+
+        # Второй и дальше — добавляем хеш геометрии,
+        # чтобы имя было одинаковым в любом файле
+        candidate = f"{base}_a_{ExportObject.mesh_geometry_hash(mesh)}"
+        if candidate not in taken:
+            _used_mesh_names.add(candidate)
+            return candidate
+
+        # Совсем редкий случай: тот же хеш уже занят (полная копия) — 
+        # это тот же меш, можно переиспользовать имя
+        return candidate    
+        
     # AI
     def apply_modifiers_to_duplicate(obj, parent):
         # 1. Создаем дубликат объекта (не связанный с оригиналом)
         obj_copy = obj.copy()
         obj_copy.data = obj.data.copy()
         bpy.context.collection.objects.link(obj_copy)
+    
+        obj_copy.name = obj.name+'_dupl'
+        obj_copy.data.name = obj.data.name+'_dupl'
+        
+        # 2. ЯВНО назначаем имя по единой схеме.
+        #    Важно: берём имя ИСХОДНОГО меша (obj.data.name до подмены),
+        #    а не то, что Blender мог дать копии (.001 или без суффикса)
+        # ~ obj_copy.data.name = ExportObject.make_modified_mesh_name(obj.data.name, obj_copy.data)
     
         # 2. Делаем дубликат активным и выделенным
         bpy.context.view_layer.objects.active = obj_copy
@@ -1752,7 +2061,6 @@ class ExportObject(bpy.types.Operator):
     
     
     def exportOneObjectData(Object, Parent, self, context, tabs, serial):
-        #
         print( str(tabs) + '▼Export object [' + str(Object.name) + '] start: ')
 
         #tabs += '\t'
@@ -1760,7 +2068,7 @@ class ExportObject(bpy.types.Operator):
         # 2.1 configure and export object materials
         print(str(tabs+'\t')+'1) Materials...')
         exportMaterialClass.configureMaterial(Object, tabs+'\t')
-        if context.scene.bMaterials == True:                                            # по галочке
+        if context.scene.bMaterials == True:
             exportMaterialClass.exportMaterial(Object, self, context, tabs+'\t')                   # материалы для этого объекта
 
         # 2.2 export object description
@@ -1777,16 +2085,17 @@ class ExportObject(bpy.types.Operator):
 
     
     def exportOneObject(head, tail, OBJECT, self, context, tabs, serial): # рассмотрим объект коллекции из уровня
-        print( '\n' + str(tabs)+'▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬')
+        print( '' + str(tabs)+'▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬')
         print( str(tabs) + '▼Exporting single object ['+str(OBJECT.name)+']:')
+        
+        # ориентир - ALREADY_EXPORTED_RESOURCES
         
         # получили шапку, хвост и надо экспортировать все наши объекты
         # принятый OBJECT может быть местной моделькой (с модификаторами или без) или привязанным ассетом
        
-        ###EXPORTING = []                                                                      # list of objects which need to be exported
-        DUPLICATES_MESHES_NAMES = []                                                        # list of newly created meshes which need to be removed at the end
-      
-        #tabs += '\t'
+        ###EXPORTING = []                                                                   # list of objects which need to be exported
+        
+        
         # 1 make current object active
         bpy.ops.object.select_all(action='DESELECT')                                        # снимем выделение со всего
         OBJECT.select_set(True)                                                             # выберем только текущий объект
@@ -1795,25 +2104,40 @@ class ExportObject(bpy.types.Operator):
         
         # 2 ready если простой меш без модификаторов
         if OBJECT.type == 'MESH' and not OBJECT.modifiers:
-            print( str(tabs+'\t') + 'This is simple MESH [' + str(OBJECT.name) + '].')
-            ###EXPORTING.append(OBJECT)
+            print( str(tabs) + '\t--------------------------------\n' + str(tabs) + '\tThis is simple MESH [' + str(OBJECT.name) + '].')
             ExportObject.exportOneObjectData(OBJECT, None, self, context, tabs+'\t', serial)
-            ###print( str(tabs) + '\tExport simple MESH [' + str(OBJECT.name) + '] done!')
+            print( str(tabs) + '\tExported as [' + str(OBJECT.name) + ']\n'+str(tabs)+'\t--------------------------------' )
+                
                  
         # 3 ready если меш с модификаторами
         if OBJECT.type == 'MESH' and OBJECT.modifiers:# and context.scene.bApplyMeshModifiers == True:
-            print( str(tabs+'\t') + 'This is modificatored MESH [' + str(OBJECT.name) + '].')
+            print( str(tabs+'\t--------------------------------\n') + str(tabs)  + '\tThis is modificatored MESH [' + str(OBJECT.name) + '].')
             copy = ExportObject.apply_modifiers_to_duplicate(OBJECT, None)
-            ###EXPORTING.append(copy)
             ExportObject.exportOneObjectData(copy, None, self, context, tabs+'\t', serial)
-            DUPLICATES_MESHES_NAMES.append(copy.data.name)                
-            ###print( str(tabs) + '\tExport modified MESH [' + str(OBJECT.name) + '] done!')
+            ExportObject.DUPLICATES_MESHES_NAMES.append(copy.data.name) 
+            print( str(tabs) + '\tExported as [' + str(copy.name) + ']\n'+str(tabs)+'\t--------------------------------' )
+   
                   
         # 4 ready если слинкованная коллекция (AI-generated)
         if OBJECT.instance_type == 'COLLECTION' and OBJECT.instance_collection:
             print( str(tabs+'\t') + 'This is asset from linked collection [' + str(OBJECT.name) + '].')
-            ###print( str(tabs) + '\t\tType: ' + OBJECT.instance_type)
-            ###print( str(tabs) + '\t\tCollection: ' + OBJECT.instance_collection.name)
+            
+            for col in OBJECT.instance_collection.children: #collection_children:
+                print(str(tabs) + '\t' +str(col))
+                for sub in col.objects:   
+                    print(str(tabs+'\t')+'\t\t%s: %s'%(sub.type, sub.name))
+                    # если модификаторов нет, просто заносим объект в экспортный список
+                    if not sub.modifiers:
+                        print(str(tabs+'\t')+'\t\t\tNo modifiers')
+                        ###EXPORTING.append(sub) # у этого sub координаты берутся из файла ассета, т.е как правило, в начале мира! а надо учесть смещение коллекции OBJECT
+                        ExportObject.exportOneObjectData(sub, OBJECT, self, context, tabs+'\t', serial)
+                    
+                    else: # если меш имеет модификаторы, сделаем его копию
+                        print(str(tabs+'\t')+'\t\t\tMake duplicates')
+                        copy = ExportObject.apply_modifiers_to_duplicate(sub, OBJECT)
+                        ###EXPORTING.append(copy)
+                        ExportObject.exportOneObjectData(copy, OBJECT, self, context, tabs+'\t', serial)
+                        ExportObject.DUPLICATES_MESHES_NAMES.append(copy.data.name)
         
             # Получаем все объекты из этой коллекции
             for sub in OBJECT.instance_collection.objects:
@@ -1830,7 +2154,7 @@ class ExportObject(bpy.types.Operator):
                     copy = ExportObject.apply_modifiers_to_duplicate(sub, OBJECT)
                     ###EXPORTING.append(copy)
                     ExportObject.exportOneObjectData(copy, OBJECT, self, context, tabs+'\t', serial)
-                    DUPLICATES_MESHES_NAMES.append(copy.data.name)
+                    ExportObject.DUPLICATES_MESHES_NAMES.append(copy.data.name)
             ###print( str(tabs) + '\tExport linked asset [' + str(OBJECT.name) + '] done!')
       
       
@@ -1860,39 +2184,112 @@ class ExportObject(bpy.types.Operator):
             # ~ #print( str(tabs) + '\tExport object [' + str(OBJECT.name) + '] done!')
 
         
-
-        # 5 clear temporaries
-        print('\n'+str(tabs+'\t') + '╫Clearing duplicates...')
-        #-- DUPLICATES_MESHES_NAMES хранит имена мешей дубликатов. Если они не из слинкованной библиотеки, то надо удалить!
-        for mesh in (m for m in bpy.data.meshes if m.name in DUPLICATES_MESHES_NAMES): #and m.library == None
-            if mesh.library == None:
-                print(str(tabs+'\t')+'\t\tRemove mesh ' + str(mesh) + ', lib: ' + str(mesh.library) )
-                bpy.data.meshes.remove(mesh)
-                
-						# ~ for arm in (m for m in bpy.data.armatures if m.name in TEMPORARY_MESHES and m.library == None):
-							# ~ bpy.data.armatures.remove(arm)
-        
-        # 6 end of function
-        #print( str(tabs) + 'Solo object: [' + str(OBJECT.name) + '], exported!')
-        
-        print('\n'+ str(tabs) + '▲Exporting single object ['+str(OBJECT.name)+'] done!\n'+str(tabs)+'▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬')
+        print(''+ str(tabs) + '▲Exporting single object ['+str(OBJECT.name)+'] done!\n'+str(tabs)+'▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬')
 
     ## end ###################
 
 
-    
     def execute(self, context):
-        ALREADY_EXPORTED_RESOURCES.clear()
+        # ~ ALREADY_EXPORTED_RESOURCES.clear()
+        # ~ ExportObject.DUPLICATES_MESHES_NAMES.clear()
         activeObject = bpy.context.active_object        # выберем объект
         if activeObject:
-            ExportObject.exportOneObject('','', activeObject, self, context, '', 0)
+            # ~ ExportObject.exportOneObject('','', activeObject, self, context, '', 0)
+            print('\n\n\n▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼\nExporting object [%s]'%(activeObject.name))
+
+            ADV_EXPORTED_OBJECTS.clear()
+            ADV_EXPORTED_MESHES.clear()
+            ADV_EXPORTED_MESHES_DUPLICATES.clear()
+            ADV_EXPORTED_MATERIALS.clear()
+            #ADV_EXPORTED_TEXTURES.clear()
+            
+            # 1
+            pair = (activeObject, None)
+            tempObjects1 = []
+            tempObjects1.append(pair)
+            
+            # 2
+            # but some of this objects can be linked from other files as collection objects, so we add their own objects to ADV_EXPORTED_OBJECTS too with parents
+            tempObjects2 = [pair for pair in tempObjects1]           # make a temporary list of copies
+            for pair in tempObjects2:
+                obj = pair[0]
+                parent = pair[1]
+                #print('Object: [%s], parent[%s]'%(obj.name, parent.name if parent else None))
+                if obj.instance_type == 'COLLECTION' and obj.instance_collection: 
+                    for subObj in (rootObj for rootObj in obj.instance_collection.objects if rootObj.hide_viewport == False):             # add objects from collection`s root folder
+                        pair = (subObj, obj)
+                        tempObjects2.append(pair)
+                    for childCollection in (chld for chld in obj.instance_collection.children if chld.hide_viewport == False):            # add objectd from collection`s subfolders
+                        for subSubObj in ( subRootObj for subRootObj in childCollection.objects if subRootObj.hide_viewport == False):
+                            pair = (subSubObj, obj)	
+                            tempObjects2.append(pair)
+            # now he have in tempObjects3 all objects with their parents to be exported
+        
+        
+        
+            # 3
+            # here we get all meshes and materials used by objects in ADV_EXPORTED_OBJECTS
+            for pair in (objPair for objPair in tempObjects2 if objPair[0].type == 'MESH'): # iterate all meshes of all necessary objects
+                obj = pair[0]
+                parent = pair[1]
+                if obj.modifiers:                                          # if any modifiers -  
+                    copy = ExportObject.apply_modifiers_to_duplicate(obj, None)# make a (local?) duplicate and apply all it`s modifiers to this copy
+                    ADV_EXPORTED_MESHES.append(copy.data)                   # push this copy to export list
+                    ADV_EXPORTED_MESHES_DUPLICATES.append(copy.data)        # remember this copy for further removing
+                    ADV_EXPORTED_OBJECTS.append( (copy, parent) )             # push this copy also to be descripted  
+                else:                                                       # if no modifiers - push directly
+                    ADV_EXPORTED_MESHES.append(obj.data)
+                    ADV_EXPORTED_OBJECTS.append( (obj, parent) )
+            
+                for mat in obj.data.materials:                              # iterate mesh`s materials
+                    ADV_EXPORTED_MATERIALS.append(mat)                      # push all materials to list
+        
+        
+        
+            # 4
+            # get the lists with only unique meshes and materials to avoid rewriting during export
+            unique_meshes = list(set(ADV_EXPORTED_MESHES))                  # only unique meshes from all the objects to be exported now
+            unique_materials = list(set(ADV_EXPORTED_MATERIALS))            # only unique materials from all the objects to be exported now
+            
+            
+            
+            # 5.2 meshes
+            #print('\nAll Meshes: ' + str([mesh.name for mesh in ADV_EXPORTED_MESHES]) )
+            print('\nUnique Meshes: ' + str([mesh.name for mesh in unique_meshes]) )
+            if context.scene.bModelsAsBinary or context.scene.bModelsAsText:
+                for mesh in unique_meshes:
+                    exportMeshClass.export_model_adv( self, context, mesh, '\t')
+        
+        
+            # 5.3 materials
+            #print('\nAll Materials: ' + str([material.name for material in ADV_EXPORTED_MATERIALS]) )
+            print('\nUnique Materials: ' + str([material.name for material in unique_materials]) )
+            if context.scene.bMaterials:
+                exportMaterialClass.EXPORTED_TEXTURES.clear()
+                for mat in unique_materials:
+                    exportMaterialClass.exportMaterial_adv( mat, self, context, '\t')
+
+        
+            # 6 clear temporaries
+            print('\n'+ '█Clearing duplicates...')
+            for mesh in ADV_EXPORTED_MESHES_DUPLICATES:
+                if mesh.library == None:
+                    print('\tRemove mesh ' + str(mesh) + ', lib: ' + str(mesh.library) )
+                    bpy.data.meshes.remove(mesh)
+        
+        
+            
+            
+            print('\n\tObject [%s] exported successfully\n▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲\n'%(activeObject.name))
+
             title = 'Object [' + str(activeObject.name) + '] exported as [' + str(activeObject.name) + ']!'
             ShowMessageBox(title, 'Mesh log:', 'BLENDER')
         else:
             ShowMessageBox('No object selected!', 'Mesh log:', 'BLENDER')
         return {'FINISHED'}
                 
-        
+
+
 
 # READY! button for many export 
 class ExportCollection(bpy.types.Operator):
@@ -1901,107 +2298,184 @@ class ExportCollection(bpy.types.Operator):
     bl_description = "Export marked resources of objects from selected collection + write list to file (optional)."
     
     def execute(self, context):
-        ALREADY_EXPORTED_RESOURCES.clear()
-        runtimeCounter = 0
+		
+        ADV_EXPORTED_OBJECTS.clear()
+        ADV_EXPORTED_MESHES.clear()
+        ADV_EXPORTED_MESHES_DUPLICATES.clear()
+        ADV_EXPORTED_MATERIALS.clear()
+        ADV_EXPORTED_TEXTURES.clear()
+	        
+        print('\n\n\n▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼\nExporting objects from collection: [%s]'%(context.scene.selectedCollection.name))
         
-        print('\n\n\n\n\n------------------------------------------------------------------------\nExporting objects from collection: %s\n'%(context.scene.selectedCollection.name))
-        
-        head = ';demo collection, version of ' + str(datetime.datetime.now()) + '\n' + '\nCAMERA PARAMETERS\n;Camera position - x y z \n'
-        try:    #if camera actor exists
-            head = head + 'p ' + str(camera.location.x) + ' ' + str(camera.location.y) + ' ' + str(camera.location.z) + '\n' #записали координаты
-            head = head + '\n;Camera rotation quaternion in format W X Y Z\n' + 'v ' + str(camera.rotation_quaternion.w) + ' ' + str(camera.rotation_quaternion.x) + ' ' + str(camera.rotation_quaternion.y) + ' ' + str(camera.rotation_quaternion.z) + '\nEND CAMERA PARAMETERS\n' #записали направление камеры
-        except:  #if there are no Camera actor
-            head = head + ';default position\np 7.35889 -6.92579 4.95831\n \n;Camera rotation quaternion \n v 0.483536 0.208704 0.336872 0.780483\n END CAMERA PARAMETERS\n\n'  #записали параметры камеры
-        
-        tail = '\n\nEND LEVEL OBJECTS LIST\n'
-        
-        
-        
-        # ~ LevelDescription = open(context.scene.collectionFolder, 'w')
+        CAMERA_LOCATION =  [bpy.data.objects['Camera'].location.x, bpy.data.objects['Camera'].location.y, bpy.data.objects['Camera'].location.z] if 'Camera' in bpy.context.scene.objects.keys() else [7.35, -6.92, 4.95]
+        CAMERA_ROTATION_WXYZ = [bpy.data.objects['Camera'].rotation_quaternion.w, bpy.data.objects['Camera'].rotation_quaternion.x, bpy.data.objects['Camera'].rotation_quaternion.y, bpy.data.objects['Camera'].rotation_quaternion.z] if 'Camera' in bpy.context.scene.objects.keys() else [0.483536, 0.208704, 0.336872, 0.780483]
 
-        EXPORTED_OBJECTS = []
-        tabb = ''
-        serial = 0
+        head = ';Collection [%s], version of %i-%i-%i %i:%i'%(context.scene.selectedCollection.name, datetime.datetime.now().year, datetime.datetime.now().month, datetime.datetime.now().day, datetime.datetime.now().hour, datetime.datetime.now().minute)
+        head += '\n\nCAMERA PARAMETERS\n;Camera position - x y z\n'
+        head += 'p %f %f %f'%(CAMERA_LOCATION[0],CAMERA_LOCATION[1],CAMERA_LOCATION[2])
+        head += '\n\n;Camera rotation quaternion in format W X Y Z\n'
+        head += 'v %f %f %f %f'%(CAMERA_ROTATION_WXYZ[0], CAMERA_ROTATION_WXYZ[1], CAMERA_ROTATION_WXYZ[2], CAMERA_ROTATION_WXYZ[3])
+        head += '\nEND CAMERA PARAMETERS\n'
         
-        # only if check mark "Export Level to file" is true, update it 
-        if context.scene.bExportLevel:
-            # open file anyway
-            try:
-                LevelDescription = open(context.scene.collectionFolder, 'w')
-                print('File opened: %s'%(context.scene.collectionFolder))
-                #outputValue = context.scene.collectionFolder
-            except:
-                print('Collection export error: Cannot create file for collection description! Break!\n')
-                return
-
-            # rewrite file data depending of export type: 
-            if context.scene.setType == "0":        # if export as runtime-like, add camera description
-                LevelDescription.write(';demo collection, version of ' + str(datetime.datetime.now()) + '\n')
-                LevelDescription.write('\nCAMERA PARAMETERS\n;Camera position - x y z \n')
-
-                try:    #if camera actor exists
-                    camera = bpy.data.objects['Camera']
-                    LevelDescription.write('p ' +str(camera.location.x) + ' ' + str(camera.location.y) + ' ' + str(camera.location.z) + '\n' ) #записали координаты
-                    LevelDescription.write('\n;Camera rotation quaternion in format W X Y Z\n')
-                    LevelDescription.write('v ' + str(camera.rotation_quaternion.w) + ' ' + str(camera.rotation_quaternion.x) + ' ' + str(camera.rotation_quaternion.y) + ' ' + str(camera.rotation_quaternion.z) + '\nEND CAMERA PARAMETERS\n') #записали направление камеры
-
-                except:  #if there are no Camera actor
-                    LevelDescription.write(';default position\np 7.35889 -6.92579 4.95831\n\n;Camera rotation quaternion \nv 0.483536 0.208704 0.336872 0.780483\nEND CAMERA PARAMETERS\n\n' ) #записали параметры камеры
-            
-            # close file anyway
-            LevelDescription.close()
+        tail = '\n\nEND LEVEL OBJECTS LIST\n' 
         
-        # просто перекидываем все видимые объекты коллекции в exportOneObject, там разберутся
-        
+        # 1
+        tempObjects1 = []
+        # here we get all necessary objects from current file and selected collection
         mainSelectedCollection = bpy.data.collections[context.scene.selectedCollection.name]
-        
-        if mainSelectedCollection.hide_viewport == False:														# если главная выбираемая в панели коллекция mainSelectedCollection не скрыта (значок монитора), то
+        if mainSelectedCollection.hide_viewport == False:										# если главная выбираемая в панели коллекция mainSelectedCollection не скрыта (значок монитора), то
             print('Collection [%s] is visible.'%(mainSelectedCollection.name))
-            
             # 0-й уровень: переберем видимые объекты выбранной главной коллекции mycollection
-            for OBJECT in (obj0 for obj0 in mainSelectedCollection.objects if obj0.hide_viewport==False) :
-                ExportObject.exportOneObject(head, tail, OBJECT, self, context, '\t', serial)
-                serial += 1
-                #EXPORTED_OBJECTS.append(OBJECT)
-                #tabb = '\t'
+            for OBJECT in (obj0 for obj0 in mainSelectedCollection.objects if obj0.hide_viewport==False):
+                pair = (OBJECT, None)
+                tempObjects1.append(pair)	
 
             # 1-й уровень: переберем дочерние видимые (монитор) коллекции
             for subCollection in  (collection_1 for collection_1 in mainSelectedCollection.children if collection_1.hide_viewport == False) :
                 # 2-й уровень: переберем видимые объекты дочерней коллекции
                 for subObject in (obj2 for obj2 in subCollection.objects if obj2.hide_viewport == False) :		#hide_get()==False):
-                    ExportObject.exportOneObject(head, tail, subObject, self, context, '\t\t', serial)
-                    serial += 1
-                    #EXPORTED_OBJECTS.append(subObject)
-                    #tabb = '\t\t'
+                    pair = (subObject, None)	
+                    tempObjects1.append(pair)	
 
                 # 2-й уровень: переберем дочерние коллекции данной дочерней коллекции
                 for subSubCollection in ( subcollection_1 for subcollection_1 in subCollection.children if subcollection_1.hide_viewport == False):
                     # 3-й уровень: переберем видимые объекты данной поддочерней коллекции
                     for subSubObject in (obj3 for obj3 in subSubCollection.objects if obj3.hide_viewport == False ):		#hide_get()==False):
-                        ExportObject.exportOneObject(head, tail, subSubObject, self, context,'\t\t\t', serial)
-                        serial += 1
-                        #EXPORTED_OBJECTS.append(subSubObject)
-                        #tabb = '\t\t\t'
+                        pair = (subSubObject, None)
+                        tempObjects1.append(pair)
         
-        #print('Objects for export: ' + str(len(EXPORTED_OBJECTS)) + ' '  + str(EXPORTED_OBJECTS))
-        #with context.window_manager.progress_begin(0, len(EXPORTED_OBJECTS)) as progress:
-            #i = 0
-        #for obj in EXPORTED_OBJECTS:
-            #ExportObject.exportOneObject(head, tail, obj, self, context, tabb, serial)
-            #progress.update(i)
-            #i = i+1
-                #ShowMessageBox('Processing...'+obj.name, 'Mesh log:', 'BLENDER')
+         
+        # 2
+        # but some of this objects can be linked from other files as collection objects, so we add their own objects to ADV_EXPORTED_OBJECTS too with parents
+        tempObjects2 = [pair for pair in tempObjects1]           # make a temporary list of copies
+        for pair in tempObjects2:
+            obj = pair[0]
+            parent = pair[1]
+            #print('Object: [%s], parent[%s]'%(obj.name, parent.name if parent else None))
+            if obj.instance_type == 'COLLECTION' and obj.instance_collection: 
+                for subObj in (rootObj for rootObj in obj.instance_collection.objects if rootObj.hide_viewport == False):             # add objects from collection`s root folder
+                    pair = (subObj, obj)
+                    tempObjects2.append(pair)
+                for childCollection in (chld for chld in obj.instance_collection.children if chld.hide_viewport == False):            # add objectd from collection`s subfolders
+                    for subSubObj in ( subRootObj for subRootObj in childCollection.objects if subRootObj.hide_viewport == False):
+                        pair = (subSubObj, obj)	
+                        tempObjects2.append(pair)
+        # now he have in tempObjects3 all objects with their parents to be exported
         
-        # only if check mark "Export Level to file" is true and export type is runtime-like, add final info 
-        if context.scene.bExportLevel and context.scene.setType == "0":                                      
-            LevelDescription = open(context.scene.collectionFolder, 'a')
-            LevelDescription.write('\n\nEND LEVEL OBJECTS LIST\n')
+        
+        
+        # 3
+        # here we get all meshes and materials used by objects in ADV_EXPORTED_OBJECTS
+        for pair in (objPair for objPair in tempObjects2 if objPair[0].type == 'MESH'): # iterate all meshes of all necessary objects
+            obj = pair[0]
+            parent = pair[1]
+            
+            # 3.1 meshes
+            if obj.modifiers:                                          # if any modifiers -  
+                if context.scene.bModelsAsBinary or context.scene.bModelsAsText:
+                    copy = ExportObject.apply_modifiers_to_duplicate(obj, None)# make a (local?) duplicate and apply all it`s modifiers to this copy
+                    ADV_EXPORTED_MESHES.append(copy.data)                   # push this copy to export list
+                    ADV_EXPORTED_MESHES_DUPLICATES.append(copy.data)        # remember this copy for further removing
+                    ADV_EXPORTED_OBJECTS.append( (copy, parent) )             # push this copy also to be descripted  
+            else:                                                       # if no modifiers - push directly
+                ADV_EXPORTED_MESHES.append(obj.data)
+                ADV_EXPORTED_OBJECTS.append( (obj, parent) )
+            
+            # 3.2 materials
+            if context.scene.bMaterials:
+                for mat in obj.data.materials:                              # iterate mesh`s materials
+                    ADV_EXPORTED_MATERIALS.append(mat)                      # push all materials to list
+        
+        
+        # 4
+        # get the lists with only unique meshes and materials to avoid rewriting during export
+        unique_meshes = list(set(ADV_EXPORTED_MESHES))                  # only unique meshes from all the objects to be exported now
+        unique_materials = list(set(ADV_EXPORTED_MATERIALS))            # only unique materials from all the objects to be exported now 
+        
+           
+        # 5 OUTPUT  
+        # 5.1 descriptions
+        print('\nDescriptions:')
+        if context.scene.bExportLevel: # only if check mark "Export Level to file" is true, update it 
+			# 5.1.1 write head
+            # open file anyway
+            try:
+                LevelDescription = open(context.scene.collectionFolder, 'w')
+                print('File opened: %s'%(context.scene.collectionFolder))
+            except:
+                print('Collection export error: Cannot create file for collection description! Break!\n')
+            # rewrite file data depending of export type: 
+            if context.scene.setType == "0":        # if export as runtime-like, add camera description
+                LevelDescription.write(head)
+            # close file anyway
             LevelDescription.close()
         
-        print('\nCollection [%s] exported!'%(context.scene.selectedCollection.name))     
-        #ShowMessageBox('Collection exported', 'Mesh log:', 'BLENDER')
-        return {'FINISHED'}    
+            # 5.1.2 write body - objects descriptions
+            if len(ADV_EXPORTED_OBJECTS) > 0:
+                for pair in ADV_EXPORTED_OBJECTS:
+                    obj = pair[0]
+                    parent = pair[1]
+                    print('\tObject [%s], parent[%s]'%(obj.name if obj else None, parent.name if parent else None))
+                    ExportObject.exportObjectDescription(obj, parent, self, context, '\t', 0) #exportObjectDescription(OBJECT, PARENT, self, context, tabs, serial)
+            else:
+                print('\nError! No objects to export!')
+            
+            # 5.1.3 write tail
+            LevelDescription = open(context.scene.collectionFolder, 'a')
+            LevelDescription.write(tail)
+            LevelDescription.close()
+              
+              
+                
+        # 5.2 meshes
+        print('\nAll Meshes: ' + str([mesh.name for mesh in ADV_EXPORTED_MESHES]) )
+        if len(unique_meshes) > 0:
+            print('\nUnique Meshes: ' + str([mesh.name for mesh in unique_meshes]) )
+            if context.scene.bModelsAsBinary or context.scene.bModelsAsText:
+                for mesh in unique_meshes:
+                    exportMeshClass.export_model_adv( self, context, mesh, '\t')
+        else:
+            print('\nError! No meshes to export!')
+        
+        
+        # 5.3 materials
+        #print('\nAll Materials: ' + str([material.name for material in ADV_EXPORTED_MATERIALS]) )
+        if len(unique_materials) > 0:
+            print('\nUnique Materials: ' + str([material.name for material in unique_materials]) )
+            if context.scene.bMaterials:
+                exportMaterialClass.EXPORTED_TEXTURES.clear()
+                for mat in unique_materials:
+                    exportMaterialClass.exportMaterial_adv( mat, self, context, '\t')
+        else:
+            print('\nError! No materials to export!')
+        
+        
+        # 6 clear temporaries
+        print('\n'+ '█Clearing duplicates...')
+        if len(ADV_EXPORTED_MESHES_DUPLICATES) > 0:
+            for mesh in ADV_EXPORTED_MESHES_DUPLICATES:
+                if mesh.library == None:
+                    print('\tRemove mesh ' + str(mesh) + ', lib: ' + str(mesh.library) )
+                    bpy.data.meshes.remove(mesh)
+        else:
+            print('\nError! No duplicates to delete!')
+        
+        
 
+        print('\nCollection [%s]`s data exported:'%(context.scene.selectedCollection.name))
+        print('\n\n\n▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲\nCollection [%s] exported successfully\n'%(context.scene.selectedCollection.name))
+
+             
+        ShowMessageBox('Collection exported', 'Mesh log:', 'BLENDER')
+        return {'FINISHED'}  
+        
+        
+          
+	# ~ # only if check mark "Export Level to file" is true and export type is runtime-like, add final info 
+        # ~ if context.scene.bExportLevel and context.scene.setType == "0":                                      
+            # ~ LevelDescription = open(context.scene.collectionFolder, 'a')
+            # ~ LevelDescription.write('\n\nEND LEVEL OBJECTS LIST\n')
+            # ~ LevelDescription.close()
 
 
 # READY! this class desribes the visual of the addon: which fields exists
