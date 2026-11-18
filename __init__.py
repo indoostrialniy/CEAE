@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "CEAE v0.5.0",
+    "name": "CEAE v0.5.1",
     "author": "Paul",
-    "version": (0,5,0),
+    "version": (0,5,1),
     "blender": (4,0,2),
     "category": "Indoostrialniy",
-    "description": "05.11.2026. This addon helps to export assets to custom engine",
+    "description": "18.11.2026. This addon helps to export assets to custom engine",
 }
 
 
@@ -1492,8 +1492,8 @@ class exportMaterialClass(bpy.types.Operator):
         
         if input1.name == 'Base Color':
             nodeType = 'BaseColor'
-        if input1.name == 'Emission Color':
-            nodeType = 'Lightmap'
+        # ~ if input1.name == 'Emission Color':
+            # ~ nodeType = 'Lightmap'
         if input1.name == 'Normal':
             nodeType = 'Normal'
         if input1.name == 'Height':
@@ -1558,10 +1558,13 @@ class exportMaterialClass(bpy.types.Operator):
         # и тогда выпишем значения по-умолчанию
         if inputExportedSuccessfully == False:
             # если вход - эмиссия или цвет (т.е. вектор), то запишем значения по-умолчанию
-            if nodeType == 'Emission' or nodeType == 'BaseColor':
+            if nodeType == 'BaseColor':
                 materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value[0], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[1], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[2], ROUND_LEVEL)) +'\nEND\n' )
+            if nodeType == 'Emission':
+                materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value[0], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[1], ROUND_LEVEL)) + ' ' + str(round(input1.default_value[2], ROUND_LEVEL)) +'\nEND\n' )
+		
 			# а у остальных параметров значение состоит из 1 числа
-            if nodeType == 'Metallic' or nodeType == 'Roughness':
+            if nodeType == 'Metallic' or nodeType == 'Roughness' or nodeType == 'Alpha':
                 materialsourcefile.write('\n\nvalue\n' + str(nodeType) + ' ' + str(round(input1.default_value, ROUND_LEVEL)) + '\nEND\n' )
 	#############################################################################################################################  
             
@@ -1648,6 +1651,12 @@ class exportMaterialClass(bpy.types.Operator):
                 for input1 in (input0 for input0 in node.inputs if input0.is_linked):
                     if input1.name == 'Height':
                         exportMaterialClass.printBSDFInputData(materialsourcefile, input1, self, context, tabs)
+            # flowmap
+            for node in ( allNodes for allNodes in material.node_tree.nodes if allNodes.name == 'Flowmap'):
+                print('Found flowmap %s in material %s'%(node.name, material.name))
+                nodeType = 'Flowmap'
+                exportMaterialClass.printLinkedImageTextureData( materialsourcefile, node, self, context, nodeType, tabs+'\t' )
+    
             materialsourcefile.close()
             print(str(tabs) + '\tMaterial [%s] exported successfully!'%(material.name))
 
@@ -1770,7 +1779,12 @@ class ExportObject(bpy.types.Operator):
 
         fileToWrite.write('scale ' + str(round(OBJECT.scale.x, ROUND_LEVEL)) + ' ' +  str(round(OBJECT.scale.y,ROUND_LEVEL)) + ' ' + str(round(OBJECT.scale.z, ROUND_LEVEL)) +   '\n') #direction
 
-
+        if OBJECT.get("TriplanarMapping") and OBJECT["TriplanarMapping"] == True:
+            fileToWrite.write('type 16 triplanar\n')
+        
+        if OBJECT.get("ID"):
+            fileToWrite.write('id %i\n'%(OBJECT["ID"]))
+                
         name = OBJECT.data.name
         # ~ if name[len(name)-4] == '.' :   #обрезаем точку и номер
             # ~ name = name[0:len(name)-4]
@@ -2531,6 +2545,8 @@ class interfaceDescriptionClass(PropertyGroup):
     bpy.types.Scene.bTextures       = bpy.props.BoolProperty(name="Save used textures", description="enable exporting textures", default = False)
     bpy.types.Scene.bResizeTextures = bpy.props.BoolProperty(name="Resize", description="enable textures resizing", default = False)
     bpy.types.Scene.eResizedTextureSize        = bpy.props.EnumProperty( name="Target size", description="Choose texture size after resizing",   items=  [ ("1", "256", ""), ("2", "512", ""), ("4", "1024", ""), ("8", "2048", ""), ("16", "4096", "") ], default="1"  )
+    bpy.types.Scene.bDecimateGeometry = bpy.props.BoolProperty(name="Decimate meshes", description="enable decimating meshes", default = False)
+    bpy.types.Scene.decimateRatio    = bpy.props.StringProperty(name="Kd:", description="decimating ratio", default="1")
 
 
     bpy.types.Scene.bRewrite        = bpy.props.BoolProperty(name="Rewrite existing assets", description="enable rewriting assets", default = False)
@@ -2611,12 +2627,20 @@ class VisualDescription(bpy.types.Panel):
 
         layout.prop(scene, "bModelsAsText")
         layout.prop(scene, "bModelsAsBinary")
-        # ~ layout.prop(scene, "bApplyMeshModifiers")
-        layout.prop(scene, "bMaterials")
-        layout.prop(scene, "bTextures", emboss=True)
+        
         split = layout.split(factor=0.35)  # левая часть = 20% ширины
         col_left = split.column()
         col_right = split.column()
+        
+        # ~ col_left.prop(scene, "bDecimateGeometry", toggle=True)
+        # ~ col_right.prop(scene, "decimateRatio")
+
+    
+    
+        # ~ layout.prop(scene, "bApplyMeshModifiers")
+        layout.prop(scene, "bMaterials")
+        layout.prop(scene, "bTextures", emboss=True)
+        
 
         # ~ col_left.label(text="Resize:")    # подпись отдельно
         col_left.prop(scene, "bResizeTextures", toggle=True)
